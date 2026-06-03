@@ -16,9 +16,9 @@
     "standard": {
       "label": "标准流程",
       "steps": [
-        {"plugin": "step_a", "target": "local", "runtime": "python", "script": "tasks/step_a.py", "depends_on": []},
-        {"plugin": "step_b", "target": "local", "runtime": "python", "script": "tasks/step_b.py", "depends_on": ["step_a"]},
-        {"plugin": "step_c", "target": "ssh",  "runtime": "python", "script": "tasks/step_c.py", "depends_on": ["step_b"]}
+        {"plugin": "step_a", "target": "local", "runtime": "python", "script": "step_a.py", "depends_on": []},
+        {"plugin": "step_b", "target": "local", "runtime": "python", "script": "step_b.py", "depends_on": ["step_a"]},
+        {"plugin": "step_c", "target": "ssh",  "runtime": "python", "script": "step_c.py", "depends_on": ["step_b"]}
       ]
     }
   },

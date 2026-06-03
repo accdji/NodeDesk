@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -16,6 +18,31 @@ type Result struct {
 }
 
 type LogCallback func(line string)
+
+// ResolveScript 解析脚本路径：专属优先，通用兜底
+// project 为空则只查 tasks/
+func ResolveScript(project, script string) string {
+	if filepath.IsAbs(script) {
+		return script
+	}
+
+	// 1. 专属: projects/<project>/tasks/<script>
+	if project != "" {
+		local := filepath.Join("projects", project, "tasks", script)
+		if _, err := os.Stat(local); err == nil {
+			return local
+		}
+	}
+
+	// 2. 通用: tasks/<script>
+	shared := filepath.Join("tasks", script)
+	if _, err := os.Stat(shared); err == nil {
+		return shared
+	}
+
+	// 兜底返回通用路径（让子进程报明确的错误）
+	return shared
+}
 
 // ExecuteLocal 子进程执行，stdin JSON → stdout 逐行读
 func ExecuteLocal(runtime, script string, params map[string]any, onLog LogCallback) (*Result, error) {

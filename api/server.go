@@ -227,7 +227,8 @@ func executeWorkflow(runID, projectName string, proj *config.ProjectDef, wf conf
 		runtime := p.Runtime
 		if runtime == "" { runtime = "python" }
 		script := p.Script
-		if script == "" { script = fmt.Sprintf("tasks/%s.py", p.Name) }
+		if script == "" { script = p.Name + ".py" }
+		script = executor.ResolveScript(projectName, script)
 
 		params := map[string]any{"project": projectName, "project_id": proj.ProjectID, "work_dir": "."}
 		if p.Config != nil {

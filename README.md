@@ -15,18 +15,37 @@ go build -o workflow.exe .
 ```
 ├── main.go              # 入口
 ├── engine/              # DAG 引擎 + goroutine 调度
-│   ├── plugin.go        # 插件注册表
-│   ├── dag.go           # 拓扑排序 (Kahn)
-│   └── runner.go        # 工作流执行器
-├── executor/
-│   └── local.go         # 子进程执行器（多语言支持）
-├── api/
-│   └── server.go        # HTTP API + SSE 实时日志
-├── storage/
-│   └── store.go         # JSON 文件持久化
-├── config/
-│   └── config.go        # 配置加载
-└── web/templates/       # 中文前端 (HTMX + Alpine.js + D3.js)
+├── executor/            # 执行器（子进程 / SSH）
+├── api/                 # HTTP API + SSE 实时日志
+├── storage/             # JSON 文件持久化
+├── config/              # 配置加载 + 示例
+├── web/templates/       # 中文前端
+│
+├── tasks/               # 【通用任务】所有项目共享
+│   ├── extract.py
+│   └── convert.py
+│
+└── projects/            # 【项目配置+专属任务】
+    └── my_project/
+        ├── pipeline.json    # 工作流定义
+        └── tasks/           # 专属任务（优先级高于通用）
+            └── custom.py
+```
+
+## 任务脚本：通用 vs 专属
+
+配置中的 `script` 只写文件名（如 `convert.py`），引擎自动按优先级查找：
+
+1. `projects/<name>/tasks/<script>` — **专属任务**，优先
+2. `tasks/<script>` — **通用任务**，所有项目共享
+
+```json
+{
+  "steps": [
+    {"plugin": "extract", "script": "extract.py", ...},       // 通用
+    {"plugin": "custom",  "script": "custom.py",  ...}        // 专属（只有这个项目有）
+  ]
+}
 ```
 
 ## 多语言任务
@@ -51,8 +70,8 @@ print(json.dumps(result))
     "standard": {
       "label": "标准流程",
       "steps": [
-        {"plugin": "extract", "target": "local", "runtime": "python", "script": "tasks/extract.py", "depends_on": []},
-        {"plugin": "convert", "target": "local", "runtime": "python", "script": "tasks/convert.py", "depends_on": ["extract"]}
+        {"plugin": "extract", "target": "local", "runtime": "python", "script": "extract.py", "depends_on": []},
+        {"plugin": "convert", "target": "local", "runtime": "python", "script": "convert.py", "depends_on": ["extract"]}
       ]
     }
   },

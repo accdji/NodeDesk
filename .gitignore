@@ -1,30 +1,31 @@
-# 二进制
-workflow.exe
-*.exe
+# 用户自定义内容（不上传）
+projects/
+tasks/
 
 # 运行时数据
 data/
 
-# 自定义工作流和插件（不上传）
-projects/
-tasks/
+# 二进制
+workflow.exe
+*.exe
 
-# 但保留示例
-!config/pipeline.example.json
-!examples/
+# 环境变量
+.env
+*.env
 
 # IDE
 .vscode/
 .idea/
 .claude/
 
-# 环境变量（含密码）
-.env
-*.env
-
-# 系统文件
+# 系统
 Thumbs.db
 .DS_Store
 kestra.bat
 h2.jar
 start_kestra.bat
+
+# 但保留示例
+!config/pipeline.example.json
+!examples/
+!examples/task.py
