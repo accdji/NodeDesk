@@ -1,6 +1,4 @@
-{{define "projects.html"}}
-{{template "layout.html" .}}
-{{block "content" .}}
+{{define "projectsBody"}}
 <div x-data="projectList()" x-init="load()">
     <!-- Stats -->
     <div class="grid-4" style="margin-bottom:24px;">
@@ -24,21 +22,16 @@
 
     <!-- Toolbar -->
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
-        <div style="display:flex;align-items:center;gap:12px;">
-            <span style="font-size:14px;color:var(--text-secondary);">
-                共 <strong x-text="projects.length" style="color:var(--text);">0</strong> 个项目
-            </span>
-        </div>
-        <div class="btn-group">
-            <button class="btn btn-ghost btn-sm" @click="load()">刷新</button>
-        </div>
+        <span style="font-size:14px;color:var(--text-secondary);">
+            共 <strong x-text="projects.length" style="color:var(--text);">0</strong> 个项目
+        </span>
+        <button class="btn btn-ghost btn-sm" @click="load()">刷新</button>
     </div>
 
     <!-- Project Cards -->
     <div class="grid-3" style="margin-bottom:24px;">
         <template x-for="proj in projects" :key="proj.name">
             <div class="card fade-in" style="overflow:hidden;">
-                <!-- Card header with status indicator -->
                 <div style="padding:20px 20px 0;">
                     <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px;">
                         <div style="display:flex;align-items:center;gap:10px;">
@@ -58,8 +51,6 @@
                         <span x-text="proj.workflow"></span>
                     </div>
                 </div>
-
-                <!-- Actions -->
                 <div style="padding:14px 20px 16px;display:flex;gap:8px;border-top:1px solid var(--border);margin-top:16px;background:#F8FAFC;">
                     <button class="btn btn-primary btn-sm" style="flex:1;"
                             hx-post="/api/run/" x-bind:hx-post="'/api/run/' + proj.name"
@@ -82,14 +73,14 @@
     <div x-show="projects.length === 0" class="card empty" style="display:none;">
         <div class="empty-icon">&#128196;</div>
         <p style="font-weight:500;">暂无项目</p>
-        <p>在 projects/ 目录下创建 pipeline.json 来添加项目</p>
+        <p>在 projects/&lt;名称&gt;/ 下创建 pipeline.json 来添加项目</p>
     </div>
 
     <!-- Run Result -->
-    <div id="run-result" style="margin-top:24px;"></div>
+    <div id="run-result"></div>
 
-    <!-- SSE Log Panel (hidden until connected) -->
-    <div x-show="sseConnected" class="card fade-in" style="margin-top:20px;overflow:hidden;" x-init="initSSE()">
+    <!-- SSE Log Panel -->
+    <div x-show="sseConnected" class="card fade-in" x-init="initSSE()">
         <div class="card-header">
             <h4 style="display:flex;align-items:center;gap:8px;">
                 <span class="spinner" x-show="running"></span>
@@ -109,9 +100,7 @@
                         <span class="log-msg" style="margin-left:8px;" x-text="log.message"></span>
                     </div>
                 </template>
-                <div x-show="logs.length === 0" style="color:var(--text-muted);">
-                    等待日志输出...
-                </div>
+                <div x-show="logs.length === 0" style="color:var(--text-muted);">等待日志输出...</div>
             </div>
         </div>
     </div>
@@ -162,7 +151,6 @@ function projectList() {
         connectSSE(runId) {
             if (this.es) { this.es.close(); }
             this.es = new EventSource('/api/sse/' + runId);
-
             this.es.onmessage = (evt) => {
                 const msg = JSON.parse(evt.data);
                 if (msg.type === 'log') {
@@ -177,14 +165,9 @@ function projectList() {
                     setTimeout(() => this.load(), 500);
                 }
             };
-
-            this.es.onerror = () => {
-                this.sseConnected = false;
-                this.running = false;
-            };
+            this.es.onerror = () => { this.sseConnected = false; this.running = false; };
         }
     };
 }
 </script>
-{{end}}
 {{end}}

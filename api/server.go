@@ -17,6 +17,9 @@ import (
 	"workflow/storage"
 )
 
+// pageData 传递给 layout 模板的页面数据
+type pageData map[string]any
+
 // SSE 客户端连接
 type sseClient struct {
 	ch     chan string
@@ -63,19 +66,19 @@ func genID() string {
 
 // SetupRoutes 注册所有路由（使用 Go 1.22 标准库路由）
 func SetupRoutes(mux *http.ServeMux, tmpl *template.Template) {
-	// 页面
+	// 页面 — 每个页面通过唯一的 Body 模板名渲染内容区
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		tmpl.ExecuteTemplate(w, "projects.html", nil)
+		tmpl.ExecuteTemplate(w, "layout.html", pageData{"Body": "projectsBody"})
 	})
 	mux.HandleFunc("GET /projects", func(w http.ResponseWriter, r *http.Request) {
-		tmpl.ExecuteTemplate(w, "projects.html", nil)
+		tmpl.ExecuteTemplate(w, "layout.html", pageData{"Body": "projectsBody"})
 	})
 	mux.HandleFunc("GET /workflow/{project}", func(w http.ResponseWriter, r *http.Request) {
 		proj := r.PathValue("project")
-		tmpl.ExecuteTemplate(w, "workflow.html", map[string]string{"Project": proj})
+		tmpl.ExecuteTemplate(w, "layout.html", pageData{"Body": "workflowBody", "Project": proj})
 	})
 	mux.HandleFunc("GET /history", func(w http.ResponseWriter, r *http.Request) {
-		tmpl.ExecuteTemplate(w, "history.html", nil)
+		tmpl.ExecuteTemplate(w, "layout.html", pageData{"Body": "historyBody"})
 	})
 
 	// API - 插件

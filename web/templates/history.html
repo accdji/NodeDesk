@@ -1,6 +1,4 @@
-{{define "history.html"}}
-{{template "layout.html" .}}
-{{block "content" .}}
+{{define "historyBody"}}
 <div x-data="historyList()" x-init="load()">
     <!-- Stats -->
     <div class="grid-4" style="margin-bottom:24px;">
@@ -30,12 +28,9 @@
             </span>
             <div style="display:flex;gap:4px;">
                 <button class="btn btn-xs" :class="filter === 'all' ? 'btn-primary' : 'btn-ghost'" @click="filter='all'">全部</button>
-                <button class="btn btn-xs" :class="filter === 'success' ? 'btn-primary' : 'btn-ghost'" @click="filter='success'"
-                        style="background:var(--success-light);color:#059669;" x-show="filter==='success' || true">成功</button>
-                <button class="btn btn-xs" :class="filter === 'failed' ? 'btn-primary' : 'btn-ghost'" @click="filter='failed'"
-                        style="background:var(--failed-light);color:#DC2626;" x-show="filter==='failed' || true">失败</button>
-                <button class="btn btn-xs" :class="filter === 'running' ? 'btn-primary' : 'btn-ghost'" @click="filter='running'"
-                        style="background:var(--running-light);color:#2563EB;" x-show="filter==='running' || true">运行中</button>
+                <button class="btn btn-xs" :class="filter === 'success' ? 'btn-primary' : 'btn-ghost'" @click="filter='success'">成功</button>
+                <button class="btn btn-xs" :class="filter === 'failed' ? 'btn-primary' : 'btn-ghost'" @click="filter='failed'">失败</button>
+                <button class="btn btn-xs" :class="filter === 'running' ? 'btn-primary' : 'btn-ghost'" @click="filter='running'">运行中</button>
             </div>
         </div>
         <button class="btn btn-ghost btn-sm" @click="load()">刷新</button>
@@ -50,12 +45,11 @@
 
     <!-- History list -->
     <template x-for="(run, idx) in filteredRuns" :key="run.id">
-        <div class="card fade-in" style="margin-bottom:12px;overflow:hidden;"
+        <div class="card fade-in" style="overflow:hidden;"
              :style="'animation-delay:' + (idx * 30) + 'ms'">
             <div style="padding:16px 20px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;"
                  @click="toggle(run.id)">
                 <div style="display:flex;align-items:center;gap:16px;flex:1;">
-                    <!-- Status icon -->
                     <div style="width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;"
                          :style="statusIconStyle(run.status)">
                         <span x-show="run.status === 'success'" style="color:var(--success);">&#10003;</span>
@@ -63,7 +57,6 @@
                         <span x-show="run.status === 'running'" class="spinner"></span>
                         <span x-show="!['success','failed','running'].includes(run.status)" style="color:var(--text-muted);">&#9679;</span>
                     </div>
-                    <!-- Info -->
                     <div style="flex:1;">
                         <div style="display:flex;align-items:center;gap:10px;margin-bottom:2px;">
                             <span style="font-weight:600;font-size:14px;" x-text="run.project_name"></span>
@@ -81,16 +74,13 @@
                 </div>
             </div>
 
-            <!-- Expanded detail panel -->
             <div x-show="expanded === run.id"
                  style="border-top:1px solid var(--border);background:#F8FAFC;"
                  x-data="{ detail: null }"
                  x-init="loadDetail(run.id).then(d => { detail = d; })">
-                <!-- Loading -->
                 <div x-show="!detail" style="padding:24px;text-align:center;color:var(--text-muted);">
                     <span class="spinner"></span> 加载中...
                 </div>
-                <!-- Steps table -->
                 <div x-show="detail && detail.steps && detail.steps.length > 0" style="padding:16px 20px;">
                     <div style="font-size:13px;font-weight:600;margin-bottom:8px;color:var(--text-secondary);">步骤详情</div>
                     <table>
@@ -107,11 +97,9 @@
                         </tbody>
                     </table>
                 </div>
-                <!-- No steps -->
                 <div x-show="detail && (!detail.steps || detail.steps.length === 0)" style="padding:24px;text-align:center;color:var(--text-muted);">
                     暂无步骤信息
                 </div>
-                <!-- Logs (last 30 lines) -->
                 <div x-show="detail && detail.logs && detail.logs.length > 0" style="padding:0 20px 16px;">
                     <div style="font-size:13px;font-weight:600;margin-bottom:8px;color:var(--text-secondary);">
                         执行日志 <span style="font-weight:400;color:var(--text-muted);" x-text="'(最后 ' + Math.min(30, detail.logs.length) + ' 行)'"></span>
@@ -181,5 +169,4 @@ function historyList() {
     };
 }
 </script>
-{{end}}
 {{end}}
