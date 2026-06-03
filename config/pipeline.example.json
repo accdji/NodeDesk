@@ -14,16 +14,58 @@
   },
   "workflows": {
     "standard": {
-      "label": "标准流程",
+      "label": "闁哄秴娲ら崳锟芥繛缈犺兌閳伙拷",
       "steps": [
-        {"plugin": "step_a", "target": "local", "runtime": "python", "script": "step_a.py", "depends_on": []},
-        {"plugin": "step_b", "target": "local", "runtime": "python", "script": "step_b.py", "depends_on": ["step_a"]},
-        {"plugin": "step_c", "target": "ssh",  "runtime": "python", "script": "step_c.py", "depends_on": ["step_b"]}
+        {
+          "plugin": "step_a",
+          "target": "local",
+          "runtime": "python",
+          "script": "step_a.py",
+          "server": "",
+          "config": null
+        },
+        {
+          "plugin": "step_b",
+          "target": "local",
+          "runtime": "python",
+          "script": "step_b.py",
+          "server": "",
+          "config": null,
+          "depends_on": [
+            "step_a"
+          ]
+        },
+        {
+          "plugin": "step_c",
+          "target": "ssh",
+          "runtime": "python",
+          "script": "step_c.py",
+          "server": "",
+          "config": null,
+          "depends_on": [
+            "step_b"
+          ]
+        }
       ]
     }
   },
   "projects": [
-    {"name": "example", "project_id": "001", "workflow": "standard", "enabled": false}
+    {
+      "name": "example",
+      "project_id": "001",
+      "workflow": "standard",
+      "zip_source_dir": "",
+      "server": "",
+      "enabled": true
+    },
+    {
+      "name": "111",
+      "project_id": "111",
+      "workflow": "standard",
+      "zip_source_dir": "",
+      "server": "",
+      "enabled": true
+    }
   ],
   "global": {
     "work_dir": "."

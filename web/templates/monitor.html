@@ -1,0 +1,476 @@
+{{define "monitorBody"}}
+<div x-data="runMonitor('{{.Project}}', '{{.RunID}}')" x-init="init()">
+    <!-- Breadcrumb -->
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:20px;font-size:13px;">
+        <a href="/projects" style="color:var(--text-muted);text-decoration:none;">项目列表</a>
+        <span style="color:var(--text-muted);">/</span>
+        <a :href="'/workflow/' + projectName" style="color:var(--text-muted);text-decoration:none;" x-text="projectName"></a>
+        <span style="color:var(--text-muted);">/</span>
+        <span style="font-weight:500;color:var(--text);">执行监控</span>
+    </div>
+
+    <!-- Status Bar - slim -->
+    <div class="card" style="margin-bottom:20px;padding:16px 20px;display:flex;align-items:center;justify-content:space-between;">
+        <div style="display:flex;align-items:center;gap:16px;">
+            <div :style="'width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0;' + statusIconStyle">
+                <span x-show="status === 'running'" class="spinner"></span>
+                <span x-show="status === 'success'">&#10003;</span>
+                <span x-show="status === 'failed'">&#10007;</span>
+                <span x-show="status === 'pending'">&#9679;</span>
+            </div>
+            <div>
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <span style="font-weight:700;font-size:17px;" x-text="projectName"></span>
+                    <span class="badge" :class="statusBadge" x-text="statusText" style="font-size:12px;"></span>
+                </div>
+                <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">
+                    耗时 <span x-text="elapsed" style="color:var(--text);font-weight:500;"></span>
+                    <span style="margin-left:12px;">步骤 <span x-text="completedSteps + '/' + totalSteps" style="color:var(--text);font-weight:500;"></span></span>
+                    <span style="margin-left:12px;font-family:monospace;font-size:11px;" x-text="runId ? '#' + runId.substring(0,12) : ''"></span>
+                </div>
+            </div>
+        </div>
+        <div class="btn-group">
+            <button class="btn btn-outline btn-sm" @click="cancelRun()" x-show="status === 'running'">取消</button>
+            <a :href="'/history/' + runId" class="btn btn-ghost btn-sm" x-show="status !== 'running' && status !== 'pending'">查看详情 &rarr;</a>
+        </div>
+    </div>
+
+    <!-- Progress -->
+    <div x-show="totalSteps > 0" style="margin-bottom:20px;">
+        <div class="progress-bar" style="height:6px;">
+            <div class="progress-fill" :class="progressClass" :style="{ width: progressPct + '%' }"></div>
+        </div>
+    </div>
+
+    <!-- DAG - hero element -->
+    <div class="card" style="margin-bottom:20px;">
+        <div class="card-header">
+            <h4>任务流程</h4>
+            <div style="display:flex;gap:14px;font-size:11px;color:var(--text-muted);">
+                <span><span class="badge-dot success"></span> 成功</span>
+                <span><span class="badge-dot failed"></span> 失败</span>
+                <span><span class="badge-dot running"></span> 执行中</span>
+                <span><span class="badge-dot pending"></span> 等待</span>
+            </div>
+        </div>
+        <div class="card-body" style="padding:20px;">
+            <div id="monitor-dag" class="dag-container" style="min-height:260px;">
+                <div x-show="dagNodes.length === 0" style="text-align:center;padding:60px;color:var(--text-muted);">
+                    <span x-show="status === 'pending'">等待执行开始...</span>
+                    <span class="spinner" x-show="status === 'running' && dagNodes.length === 0"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Two column: Steps + Logs -->
+    <div class="grid-2" style="margin-bottom:20px;">
+        <!-- Step Status -->
+        <div class="card" x-show="dagNodes.length > 0">
+            <div class="card-header">
+                <h4>步骤状态</h4>
+                <span style="font-size:12px;color:var(--text-muted);" x-text="dagNodes.length + ' 个步骤'"></span>
+            </div>
+            <div class="card-body" style="padding:0;max-height:360px;overflow-y:auto;">
+                <template x-for="node in dagNodes" :key="node.id">
+                    <div style="display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--border);">
+                        <div :style="'width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;'+stepDotStyle(node.status)">
+                            <span x-show="node.status === 'success'">&#10003;</span>
+                            <span x-show="node.status === 'failed'">&#10007;</span>
+                            <span x-show="node.status === 'running'" class="spinner"></span>
+                            <span x-show="node.status === 'skipped'">&#9654;</span>
+                            <span x-show="node.status === 'pending'">&#9679;</span>
+                        </div>
+                        <div style="flex:1;min-width:0;">
+                            <div style="font-weight:500;font-size:14px;" x-text="node.label || node.id"></div>
+                            <div style="font-size:12px;color:var(--text-muted);" x-text="node.target || 'local'"></div>
+                        </div>
+                        <span x-show="node.duration !== undefined" style="font-size:13px;color:var(--text-muted);white-space:nowrap;" x-text="(node.duration||0).toFixed(1)+'s'"></span>
+                        <span class="badge" :class="'badge-' + node.status" x-text="statusLabel(node.status)" style="font-size:11px;"></span>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- Logs -->
+        <div class="card">
+            <div class="card-header">
+                <h4>实时日志</h4>
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <input x-model="logFilter" placeholder="过滤关键词..." style="width:130px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:11px;outline:none;">
+                    <a x-show="status !== 'running' && runId" :href="'/api/history/' + runId + '/logs/download'" class="btn btn-ghost btn-xs">下载</a>
+                </div>
+            </div>
+            <div class="card-body" style="padding:0;">
+                <div class="log-panel" x-ref="logPanel" style="border-radius:0;max-height:340px;overflow-y:auto;font-size:12px;">
+                    <template x-for="log in filteredLogs" :key="log._idx">
+                        <div>
+                            <span class="log-time" x-text="log.timestamp"></span>
+                            <span class="log-step" style="margin-left:6px;" x-text="'['+log.step_name+']'"></span>
+                            <span class="log-msg" style="margin-left:6px;" x-text="log.message"></span>
+                        </div>
+                    </template>
+                    <div x-show="logs.length === 0" style="color:var(--text-muted);">等待输出...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Waiting state -->
+    <div x-show="!runId" class="card empty">
+        <div class="empty-icon">&#9881;</div>
+        <p style="font-weight:500;">等待执行</p>
+        <p>点击项目卡片上的「执行」按钮，将自动跳转至此处实时展示执行过程</p>
+    </div>
+</div>
+
+<script>
+function runMonitor(projectName, initialRunId) {
+    return {
+        projectName: projectName,
+        runId: initialRunId || '',
+        status: 'pending',
+        es: null,
+        logs: [],
+        dagNodes: [],
+        dagEdges: [],
+        totalSteps: 0,
+        completedSteps: 0,
+        failedSteps: 0,
+        elapsed: '—',
+        timer: null,
+        startTime: null,
+        autoScroll: true,
+        logFilter: '',
+        _logIdx: 0,
+
+        get statusBadge() {
+            const m = { running:'badge-running', success:'badge-success', failed:'badge-failed', pending:'badge-pending' };
+            return m[this.status] || 'badge-pending';
+        },
+        get statusText() {
+            const m = { running:'执行中', success:'已完成', failed:'失败', pending:'等待' };
+            return m[this.status] || '等待';
+        },
+        get progressPct() {
+            return this.totalSteps > 0 ? Math.round(this.completedSteps / this.totalSteps * 100) : 0;
+        },
+        get progressClass() {
+            if (this.status === 'failed') return 'failed';
+            if (this.status === 'success') return 'success';
+            return '';
+        },
+        get statusIconStyle() {
+            const m = {
+                running: 'background:#DBEAFE;color:#2563EB;',
+                success: 'background:#D1FAE5;color:#059669;',
+                failed: 'background:#FEE2E2;color:#DC2626;',
+                pending: 'background:#F1F5F9;color:#64748B;'
+            };
+            return m[this.status] || m.pending;
+        },
+        get filteredLogs() {
+            if (!this.logFilter) return this.logs;
+            const q = this.logFilter.toLowerCase();
+            return this.logs.filter(l => l.message.toLowerCase().includes(q));
+        },
+
+        async init() {
+            if (!this.runId) return;
+            // 先查历史：已完成就直接展示，否则初始化 DAG + 连 SSE
+            try {
+                const res = await fetch('/api/history/' + this.runId);
+                if (res.ok) {
+                    const doc = await res.json();
+                    if (doc.run && doc.run.status !== 'running') {
+                        this.loadFromHistory(doc);
+                        return;
+                    }
+                    if (doc.run) this.startTimer(doc.run.created_at);
+                }
+            } catch(e) {}
+
+            // 初始化 DAG（防止错过 SSE dag 事件）
+            await this.initDAG();
+            // 连接 SSE（只在这里调用 startTimer，防止重复启动）
+            this.status = 'running';
+            if (!this.timer) this.startTimer();
+            this.connectSSE(this.runId);
+        },
+
+        async initDAG() {
+            if (this.dagNodes.length > 0) return;
+            try {
+                const res = await fetch('/api/projects/' + this.projectName);
+                if (!res.ok) return;
+                const data = await res.json();
+                if (data.steps) {
+                    this.totalSteps = data.steps.length;
+                    this.dagNodes = data.steps.map(s => ({
+                        id: s.plugin, label: s.plugin, status: 'pending',
+                        type: s.type || 'script', target: s.target, deps: s.depends_on || []
+                    }));
+                    this.dagEdges = [];
+                    data.steps.forEach(s => {
+                        (s.depends_on || []).forEach(dep => {
+                            if (!this.dagEdges.find(e => e.from === dep && e.to === s.plugin)) {
+                                this.dagEdges.push({ from: dep, to: s.plugin });
+                            }
+                        });
+                    });
+                    this.$nextTick(() => this.drawDAG());
+                }
+            } catch(e) {}
+        },
+
+        connectSSE(runId) {
+            if (this.es) this.es.close();
+            this.status = 'running';
+            this.es = new EventSource('/api/sse/' + runId);
+
+            // 兜底轮询 + 同步步骤状态（防止错过 SSE 事件）
+            const syncFromHistory = async () => {
+                if (this.status !== 'running') return true; // done
+                try {
+                    const res = await fetch('/api/history/' + runId);
+                    if (!res.ok) return false;
+                    const doc = await res.json();
+                    if (!doc.run) return false;
+                    // 运行中：同步已有的步骤状态和日志
+                    if (doc.run.status === 'running') {
+                        if (doc.steps) {
+                            this.totalSteps = doc.steps.length;
+                            doc.steps.forEach(s => {
+                                const node = this.dagNodes.find(n => n.id === s.step_name);
+                                if (node && node.status !== s.state) {
+                                    node.status = s.state;
+                                    node.duration = s.duration;
+                                    if (s.error) node.error = s.error;
+                                }
+                            });
+                            this.completedSteps = doc.steps.filter(s => s.state === 'success').length;
+                            this.failedSteps = doc.steps.filter(s => s.state === 'failed').length;
+                            this.$nextTick(() => this.drawDAG());
+                        }
+                        if (doc.logs && doc.logs.length > this.logs.length) {
+                            this.logs = doc.logs.map((l, i) => { l._idx = i; return l; });
+                            this._logIdx = this.logs.length;
+                        }
+                        return false; // keep polling
+                    }
+                    // 已结束：最终同步
+                    clearInterval(fallback);
+                    if (this.es) this.es.close();
+                    this.status = doc.run.status === 'success' ? 'success' : 'failed';
+                    if (doc.run.finished_at) this.stopTimer(doc.run.finished_at);
+                    else this.stopTimer();
+                    if (doc.steps && doc.steps.length > 0) {
+                        this.totalSteps = doc.steps.length;
+                        this.completedSteps = doc.steps.filter(s => s.state === 'success').length;
+                        this.failedSteps = doc.steps.filter(s => s.state === 'failed').length;
+                        doc.steps.forEach(s => {
+                            const node = this.dagNodes.find(n => n.id === s.step_name);
+                            if (node) {
+                                node.status = s.state;
+                                node.duration = s.duration;
+                                if (s.error) node.error = s.error;
+                            }
+                        });
+                        this.$nextTick(() => this.drawDAG());
+                    }
+                    if (doc.logs && doc.logs.length > this.logs.length) {
+                        this.logs = doc.logs.map((l, i) => { l._idx = i; return l; });
+                        this._logIdx = this.logs.length;
+                    }
+                    return true;
+                } catch(e) { return false; }
+            };
+
+            // 首次 300ms 后检查（给 SSE 连接一个机会），之后每 1.5s 轮询
+            let fallback;
+            setTimeout(() => {
+                syncFromHistory().then(done => {
+                    if (!done) fallback = setInterval(() => { syncFromHistory().then(done => { if (done) clearInterval(fallback); }); }, 1500);
+                });
+            }, 300);
+
+            this.es.onmessage = (evt) => {
+                const msg = JSON.parse(evt.data);
+                if (msg.type === 'dag') {
+                    const raw = typeof msg.status === 'string' ? msg.status : (msg.data || '{}');
+                    const data = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                    if (data.steps && this.dagNodes.length === 0) {
+                        this.totalSteps = data.steps.length;
+                        this.dagNodes = data.steps.map(s => ({
+                            id: s.name, label: s.name, status: 'pending',
+                            type: s.type || 'script', target: s.target, deps: s.depends_on || []
+                        }));
+                        this.dagEdges = [];
+                        data.steps.forEach(s => {
+                            (s.depends_on || []).forEach(dep => {
+                                if (!this.dagEdges.find(e => e.from === dep && e.to === s.name)) {
+                                    this.dagEdges.push({ from: dep, to: s.name });
+                                }
+                            });
+                        });
+                        this.$nextTick(() => this.drawDAG());
+                    }
+                } else if (msg.type === 'step_start') {
+                    const data = typeof msg.status === 'string' ? JSON.parse(msg.status) : msg;
+                    const node = this.dagNodes.find(n => n.id === data.step);
+                    if (node) { node.status = 'running'; node.duration = undefined; }
+                    this.$nextTick(() => this.drawDAG());
+                } else if (msg.type === 'step_end') {
+                    const data = typeof msg.status === 'string' ? JSON.parse(msg.status) : msg;
+                    const node = this.dagNodes.find(n => n.id === data.step);
+                    if (node) {
+                        node.status = data.state;
+                        node.duration = data.duration;
+                        if (data.error) node.error = data.error;
+                        if (data.state === 'success') this.completedSteps++;
+                        else if (data.state === 'failed') this.failedSteps++;
+                    }
+                    this.$nextTick(() => this.drawDAG());
+                } else if (msg.type === 'log') {
+                    msg._idx = this._logIdx++;
+                    this.logs.push(msg);
+                    if (this.autoScroll) {
+                        this.$nextTick(() => {
+                            const p = this.$refs.logPanel;
+                            if (p) p.scrollTop = p.scrollHeight;
+                        });
+                    }
+                } else if (msg.type === 'completed') {
+                    clearInterval(fallback);
+                    if (this.es) this.es.close();
+                    // 最终同步（先同步步骤再改状态，确保 syncFromHistory 能正常执行）
+                    syncFromHistory(true).then(() => {
+                        if (this.status === 'running') {
+                            this.status = msg.status === 'success' ? 'success' : 'failed';
+                            this.stopTimer();
+                        }
+                    });
+                }
+            };
+            this.es.onerror = () => {
+                // SSE 出错时不立即标记失败，让兜底轮询处理
+            };
+        },
+
+        async cancelRun() {
+            if (!this.runId) return;
+            await fetch('/api/run/' + this.projectName + '/cancel', {
+                method: 'POST', headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({ run_id: this.runId })
+            });
+            if (this.es) this.es.close();
+            this.status = 'failed';
+            this.stopTimer();
+        },
+
+        startTimer(fromTime) {
+            this.startTime = fromTime ? new Date(fromTime).getTime() : Date.now();
+            this.timer = setInterval(() => {
+                const s = Math.floor((Date.now() - this.startTime) / 1000);
+                this.elapsed = s < 60 ? s + 's' : Math.floor(s/60) + 'm ' + (s%60) + 's';
+            }, 1000);
+        },
+
+        stopTimer(atTime) {
+            if (this.timer) clearInterval(this.timer);
+            this.timer = null;
+            const end = atTime ? new Date(atTime).getTime() : Date.now();
+            const s = Math.floor((end - this.startTime) / 1000);
+            this.elapsed = s < 60 ? s + 's' : Math.floor(s/60) + 'm ' + (s%60) + 's';
+        },
+
+        statusLabel(s) {
+            return { pending:'等待', running:'运行中', success:'成功', failed:'失败', skipped:'跳过' }[s] || s;
+        },
+
+        stepDotStyle(s) {
+            const m = {
+                success: 'background:#D1FAE5;color:#10B981;',
+                failed: 'background:#FEE2E2;color:#EF4444;',
+                running: 'background:#DBEAFE;color:#3B82F6;',
+                skipped: 'background:#FEF3C7;color:#F59E0B;',
+                pending: 'background:#F1F5F9;color:#94A3B8;'
+            };
+            return m[s] || m.pending;
+        },
+
+        drawDAG() {
+            const container = document.getElementById('monitor-dag');
+            if (!container || this.dagNodes.length === 0) return;
+            container.innerHTML = '';
+            const w = Math.max(container.clientWidth || 700, 500);
+            const h = 260;
+
+            const svg = d3.select('#monitor-dag').append('svg').attr('width', w).attr('height', h);
+            const levels = this.computeLevels();
+            const cmap = { success:'#10B981', failed:'#EF4444', running:'#3B82F6', skipped:'#F59E0B', pending:'#64748B' };
+            const tcolors = { start: '#10B981', end: '#EF4444', condition: '#F59E0B', loop: '#8B5CF6', script: '#64748B' };
+
+            const nw = 150, nh = 50;
+            const nodes = this.dagNodes.map(n => {
+                const lvl = levels.findIndex(l => l.includes(n.id));
+                const cnt = (levels[lvl] || []).length || 1;
+                const idx = (levels[lvl] || []).indexOf(n.id);
+                const lw = w / Math.max(levels.length, 1);
+                return { ...n, x: lvl * lw + lw * 0.5 - nw/2, y: idx * (h / Math.max(cnt,1)) + 0.5 * (h / Math.max(cnt,1)) - nh/2 };
+            });
+
+            svg.append('defs').append('marker')
+                .attr('id','mah2').attr('viewBox','0 0 10 10')
+                .attr('refX',nw/2).attr('refY',5).attr('markerWidth',6).attr('markerHeight',6)
+                .attr('orient','auto')
+                .append('path').attr('d','M0,0 L10,5 L0,10 Z').attr('fill','#94A3B8');
+
+            const nm = {};
+            nodes.forEach(n => { nm[n.id] = n; });
+            svg.selectAll('line').data(this.dagEdges).enter().append('line')
+                .attr('x1',d=>(nm[d.from]||{x:0}).x+nw/2)
+                .attr('y1',d=>(nm[d.from]||{y:0}).y+nh/2)
+                .attr('x2',d=>(nm[d.to]||{x:0}).x+nw/2)
+                .attr('y2',d=>(nm[d.to]||{y:0}).y+nh/2)
+                .attr('stroke','#94A3B8').attr('stroke-width',2).attr('marker-end','url(#mah2)');
+
+            const g = svg.selectAll('g.node').data(nodes).enter().append('g')
+                .attr('transform',d=>`translate(${d.x},${d.y})`);
+
+            g.append('rect').attr('width',nw).attr('height',nh)
+                .attr('rx',10).attr('fill',d => {
+                    if (d.status !== 'pending') return cmap[d.status] || '#64748B';
+                    return tcolors[d.type] || tcolors['script'];
+                });
+
+            g.append('text').attr('x',nw/2).attr('y',22)
+                .attr('text-anchor','middle').attr('fill','#fff')
+                .attr('font-size',13).attr('font-weight',700).text(d=>d.label);
+
+            g.append('text').attr('x',nw/2).attr('y',40)
+                .attr('text-anchor','middle').attr('fill','rgba(255,255,255,0.8)')
+                .attr('font-size',10).text(d=>(d.target||'local') + (d.duration !== undefined ? ' · '+(d.duration||0).toFixed(1)+'s' : ''));
+        },
+
+        computeLevels() {
+            if (this.dagNodes.length === 0) return [];
+            let levels = [], placed = new Set();
+            const all = this.dagNodes.map(n=>n.id);
+            while (placed.size < all.length) {
+                let cur = [];
+                all.forEach(id=>{
+                    if (placed.has(id)) return;
+                    if (this.dagEdges.filter(e=>e.to===id).map(e=>e.from).every(d=>placed.has(d))) cur.push(id);
+                });
+                if (cur.length===0){ all.forEach(id=>{if(!placed.has(id)){cur.push(id);placed.add(id);}}); }
+                else cur.forEach(id=>placed.add(id));
+                if (cur.length>0) levels.push(cur);
+            }
+            return levels;
+        }
+    };
+}
+</script>
+{{end}}

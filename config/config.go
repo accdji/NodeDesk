@@ -16,14 +16,30 @@ type ServerConfig struct {
 	Paths      map[string]string `json:"paths"`
 }
 
+type ParamDef struct {
+	Name     string `json:"name"`
+	Type     string `json:"type"` // "string", "number", "boolean", "object", "array"
+	Desc     string `json:"desc"`
+	Required bool   `json:"required"`
+}
+
 type StepDef struct {
-	Plugin    string         `json:"plugin"`
-	Target    string         `json:"target"`
-	Runtime   string         `json:"runtime"`
-	Script    string         `json:"script"`
-	Server    string         `json:"server"`
-	Config    map[string]any `json:"config"`
-	DependsOn []string       `json:"depends_on,omitempty"`
+	Plugin        string         `json:"plugin"`
+	Type          string         `json:"type"` // "script" (default), "condition", "loop", "start", "end"
+	Target        string         `json:"target"`
+	Runtime       string         `json:"runtime"`
+	Script        string         `json:"script"`
+	Server        string         `json:"server"`
+	Mode          string         `json:"mode"`          // "function" 或 "cli"
+	EntryFunction string         `json:"entry_function"` // 函数模式入口函数名
+	Config        map[string]any `json:"config"`
+	DependsOn     []string       `json:"depends_on,omitempty"`
+	Inputs        []ParamDef     `json:"inputs,omitempty"`
+	Outputs       []ParamDef     `json:"outputs,omitempty"`
+	Condition     string         `json:"condition,omitempty"`
+	LoopOver      string         `json:"loop_over,omitempty"`
+	TrueBranch    string         `json:"true_branch,omitempty"`
+	FalseBranch   string         `json:"false_branch,omitempty"`
 }
 
 type WorkflowDef struct {
@@ -45,6 +61,7 @@ type PipelineConfig struct {
 	Workflows map[string]WorkflowDef  `json:"workflows"`
 	Projects  []ProjectDef            `json:"projects"`
 	Global    map[string]string       `json:"global"`
+	Lang      string                  `json:"lang"`
 }
 
 var currentPath string

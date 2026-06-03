@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -88,6 +89,12 @@ func (s *Store) saveDoc(id string) {
 	os.WriteFile(filepath.Join(s.dir, id+".json"), data, 0644)
 }
 
+func (s *Store) Flush(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.saveDoc(id)
+}
+
 func (s *Store) SaveRun(run RunRecord) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -147,14 +154,32 @@ func (s *Store) AppendLog(entry LogEntry) error {
 	return nil
 }
 
-func (s *Store) GetHistory() ([]RunRecord, error) {
+// HistoryFilter 历史查询过滤条件
+type HistoryFilter struct {
+	Status  string // 空=全部
+	Project string // 空=全部
+	Search  string // 搜索 RunID 或项目名
+	Page    int    // 页码，从1开始
+	Size    int    // 每页条数
+}
+
+type HistoryResult struct {
+	Runs  []RunRecord `json:"runs"`
+	Total int         `json:"total"`
+	Page  int         `json:"page"`
+	Size  int         `json:"size"`
+}
+
+func (s *Store) GetHistory(filter *HistoryFilter) (*HistoryResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	runs := make([]RunRecord, 0, len(s.runs))
 	for _, doc := range s.runs {
 		runs = append(runs, doc.Run)
 	}
-	// 按时间降序
+
+	// 排序：按时间降序
 	for i := 0; i < len(runs); i++ {
 		for j := i + 1; j < len(runs); j++ {
 			if runs[j].CreatedAt.After(runs[i].CreatedAt) {
@@ -162,10 +187,90 @@ func (s *Store) GetHistory() ([]RunRecord, error) {
 			}
 		}
 	}
-	if len(runs) > 100 {
-		runs = runs[:100]
+
+	// 过滤
+	filtered := make([]RunRecord, 0)
+	for _, r := range runs {
+		if filter.Status != "" && r.Status != filter.Status {
+			continue
+		}
+		if filter.Project != "" && r.ProjectName != filter.Project {
+			continue
+		}
+		if filter.Search != "" {
+			search := strings.ToLower(filter.Search)
+			if !strings.Contains(strings.ToLower(r.ID), search) &&
+				!strings.Contains(strings.ToLower(r.ProjectName), search) {
+				continue
+			}
+		}
+		filtered = append(filtered, r)
 	}
-	return runs, nil
+
+	total := len(filtered)
+
+	// 分页
+	if filter.Page < 1 {
+		filter.Page = 1
+	}
+	if filter.Size < 1 {
+		filter.Size = 20
+	}
+	start := (filter.Page - 1) * filter.Size
+	if start > len(filtered) {
+		start = len(filtered)
+	}
+	end := start + filter.Size
+	if end > len(filtered) {
+		end = len(filtered)
+	}
+
+	return &HistoryResult{
+		Runs:  filtered[start:end],
+		Total: total,
+		Page:  filter.Page,
+		Size:  filter.Size,
+	}, nil
+}
+
+func (s *Store) GetHistorySimple() ([]RunRecord, error) {
+	result, _ := s.GetHistory(&HistoryFilter{Page: 1, Size: 100})
+	if result == nil {
+		return []RunRecord{}, nil
+	}
+	return result.Runs, nil
+}
+
+func (s *Store) DeleteRun(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.runs, id)
+	os.Remove(filepath.Join(s.dir, id+".json"))
+	return nil
+}
+
+func (s *Store) DeleteRuns(ids []string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, id := range ids {
+		delete(s.runs, id)
+		os.Remove(filepath.Join(s.dir, id+".json"))
+	}
+	return nil
+}
+
+func (s *Store) GetLatestRun(projectName string) *RunRecord {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var latest *RunRecord
+	for _, doc := range s.runs {
+		if doc.Run.ProjectName == projectName {
+			if latest == nil || doc.Run.CreatedAt.After(latest.CreatedAt) {
+				latest = &doc.Run
+			}
+		}
+	}
+	return latest
 }
 
 func (s *Store) GetRunDetail(id string) (*RunDoc, error) {

@@ -3,10 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>工作流编排器</title>
+    <title>{{tr "app.title"}}</title>
     <script src="https://unpkg.com/htmx.org@1.9.19"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"></script>
     <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script>
+    window.LANG = {{.Tr | toJSON}};
+    window.t = function(key) { return (window.LANG && window.LANG[key]) || key; };
+    </script>
     <style>
         :root {
             --sidebar-w: 220px;
@@ -144,6 +148,26 @@
         @keyframes fadeIn { from { opacity:0; transform: translateY(8px); } to { opacity:1; transform: translateY(0); } }
         .fade-in { animation: fadeIn 0.3s ease; }
 
+        /* Toast */
+        .toast-container { position: fixed; top: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; max-width: 380px; }
+        .toast { padding: 12px 16px; border-radius: 8px; color: #fff; font-size: 13px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); animation: slideIn 0.3s ease; display: flex; align-items: center; gap: 10px; line-height: 1.4; }
+        .toast-success { background: #059669; }
+        .toast-error { background: #DC2626; }
+        .toast-info { background: #2563EB; }
+        @keyframes slideIn { from { opacity:0; transform: translateX(40px); } to { opacity:1; transform: translateX(0); } }
+
+        /* Spinner */
+        .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.6s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Loading overlay */
+        .loading-overlay { position: absolute; inset: 0; background: rgba(255,255,255,0.7); display: flex; align-items: center; justify-content: center; border-radius: var(--radius-lg); z-index: 10; }
+        .loading-dots { display: flex; gap: 6px; }
+        .loading-dots span { width: 8px; height: 8px; border-radius: 50%; background: var(--primary); animation: dotPulse 1.2s infinite ease-in-out; }
+        .loading-dots span:nth-child(2) { animation-delay: 0.2s; }
+        .loading-dots span:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes dotPulse { 0%,80%,100% { transform: scale(0.6); opacity:0.4; } 40% { transform: scale(1); opacity:1; } }
+
         /* Responsive */
         @media (max-width: 768px) {
             .sidebar { transform: translateX(-100%); }
@@ -155,20 +179,21 @@
         }
     </style>
 </head>
-<body x-data="{ page: 'projects' }" x-init="page = window.location.pathname.startsWith('/history') ? 'history' : (window.location.pathname.startsWith('/workflow') ? 'workflow' : 'projects')">
+<body x-data="{ page: 'projects' }" x-init="page = window.location.pathname.startsWith('/history') ? 'history' : (window.location.pathname.startsWith('/workflow') ? 'workflow' : (window.location.pathname.startsWith('/run') ? 'run' : 'projects'))">
+    <!-- Toast container -->
+    <div class="toast-container" id="toast-container"></div>
     <!-- Sidebar -->
     <aside class="sidebar">
         <div class="sidebar-brand">
-            <div class="logo"><span>&#9650;</span> Workflow</div>
-            <div class="ver">轻量级工作流编排器</div>
+            <div class="logo"><span>&#9650;</span> {{tr "app.title"}}</div>
+            <div class="ver">{{tr "app.version"}}</div>
         </div>
         <nav class="sidebar-nav">
-            <a href="/projects" :class="{ active: page === 'projects' }">
-                <span class="icon">&#9632;</span> 项目列表
-            </a>
+            <div style="padding:6px 12px 4px;font-size:10px;font-weight:600;color:#475569;text-transform:uppercase;letter-spacing:1px;">{{tr "nav.manage"}}</div>
+            <a href="/projects" :class="{ active: page === 'projects' || page === 'workflow' || page === 'run' }">
+                <span class="icon">&#9632;</span> {{tr "nav.projects"}}</a>
             <a href="/history" :class="{ active: page === 'history' }">
-                <span class="icon">&#9776;</span> 执行历史
-            </a>
+                <span class="icon">&#9776;</span> {{tr "nav.history"}}</a>
         </nav>
         <div class="sidebar-footer">v1.0 · Go stdlib</div>
     </aside>
@@ -176,14 +201,37 @@
     <!-- Main Content -->
     <div class="main">
         <div class="topbar">
-            <h2 x-text="page === 'projects' ? '项目列表' : (page === 'history' ? '执行历史' : '工作流详情')"></h2>
+            <h2 x-text="page === 'projects' ? t('page.projects') : (page === 'history' ? t('page.history') : (page === 'run' ? t('page.monitor') : t('page.workflow')))">项目列表</h2>
             <div class="meta">
-                <span class="dot"></span> 服务运行中
+                <span class="dot"></span> <span id="topbar-status">{{tr "app.running"}}</span>
             </div>
         </div>
         <div class="content">
-            {{if eq .Body "projectsBody"}}{{template "projectsBody" .}}{{else if eq .Body "historyBody"}}{{template "historyBody" .}}{{else if eq .Body "workflowBody"}}{{template "workflowBody" .}}{{end}}
+            {{if eq .Body "projectsBody"}}{{template "projectsBody" .}}{{else if eq .Body "historyBody"}}{{template "historyBody" .}}{{else if eq .Body "workflowBody"}}{{template "workflowBody" .}}{{else if eq .Body "detailBody"}}{{template "detailBody" .}}{{else if eq .Body "monitorBody"}}{{template "monitorBody" .}}{{end}}
         </div>
     </div>
+
+    <!-- Global toast & keyboard shortcuts -->
+    <script>
+    function showToast(type, message) {
+        const container = document.getElementById('toast-container');
+        const el = document.createElement('div');
+        el.className = 'toast toast-' + type;
+        el.innerHTML = '<span>' + (type === 'success' ? '✓' : type === 'error' ? '✕' : 'ℹ') + '</span>' + message;
+        container.appendChild(el);
+        setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity 0.3s'; setTimeout(() => el.remove(), 300); }, 3000);
+    }
+
+    document.addEventListener('keydown', function(e) {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+            const path = window.location.pathname;
+            if (path.startsWith('/workflow/')) {
+                e.preventDefault();
+                const btn = document.querySelector('[x-data] button.btn-primary');
+                if (btn && !btn.disabled) btn.click();
+            }
+        }
+    });
+    </script>
 </body>
 </html>

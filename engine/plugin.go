@@ -23,6 +23,13 @@ type StepResult struct {
 	Ended    time.Time      `json:"-"`
 }
 
+type ParamDef struct {
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Desc     string `json:"desc"`
+	Required bool   `json:"required"`
+}
+
 type Plugin struct {
 	Name      string
 	Label     string
@@ -31,6 +38,16 @@ type Plugin struct {
 	Runtime   string
 	Script    string
 	Config    map[string]any
+	Type      string     // "script", "condition", "loop", "start", "end"
+	Mode      string     // "function" 或 "cli"
+	EntryFunc string     // 函数模式入口函数名
+	Inputs    []ParamDef
+	Outputs   []ParamDef
+	Condition string     // expression for condition nodes
+	LoopOver  string     // $step.field for loop nodes
+	// Condition node branching
+	TrueBranch  string // step name to execute if true
+	FalseBranch string // step name to execute if false
 }
 
 type PluginRegistry struct {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"log"
@@ -39,15 +40,45 @@ func main() {
 	}
 	api.SetConfig(cfg)
 	api.RegisterPlugins(cfg)
-	log.Printf("配置已加载: %d 个工作流, %d 个项目", len(cfg.Workflows), len(cfg.Projects))
+
+	// 加载国际化翻译
+	lang := cfg.Lang
+	if lang == "" {
+		lang = "zh"
+	}
+	i18nPath := filepath.Join(baseDir, "i18n", lang+".json")
+	i18nData, err := os.ReadFile(i18nPath)
+	if err != nil {
+		log.Printf("警告: 加载语言文件失败 (%s)，使用内建中文", i18nPath)
+		lang = "zh"
+		i18nData, _ = os.ReadFile(filepath.Join(baseDir, "i18n", "zh.json"))
+	}
+	translations := make(map[string]string)
+	if i18nData != nil {
+		json.Unmarshal(i18nData, &translations)
+	}
+	api.SetTranslations(lang, translations)
+	log.Printf("配置已加载: %d 个工作流, %d 个项目, 语言=%s", len(cfg.Workflows), len(cfg.Projects), lang)
 
 	// 初始化存储
 	if err := storage.Init(baseDir); err != nil {
 		log.Fatalf("存储初始化失败: %v", err)
 	}
 
-	// 加载模板
-	tmpl, err := template.ParseGlob(filepath.Join(baseDir, "web", "templates", "*.html"))
+	// 加载模板（注册 toJSON 辅助函数用于注入 LANG）
+	funcMap := template.FuncMap{
+		"toJSON": func(v any) string {
+			b, _ := json.Marshal(v)
+			return string(b)
+		},
+			"tr": func(key string) string {
+				if v, ok := translations[key]; ok {
+					return v
+				}
+				return key
+			},
+	}
+	tmpl, err := template.New("").Funcs(funcMap).ParseGlob(filepath.Join(baseDir, "web", "templates", "*.html"))
 	if err != nil {
 		log.Fatalf("模板加载失败: %v", err)
 	}
