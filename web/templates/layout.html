@@ -9,63 +9,188 @@
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
         :root {
-            --bg: #f5f5f5;
-            --card: #fff;
-            --text: #333;
-            --muted: #888;
-            --success: #2ECC71;
-            --failed: #E74C3C;
-            --running: #3498DB;
-            --pending: #95A5A6;
-            --skipped: #F39C12;
-            --border: #e0e0e0;
+            --sidebar-w: 220px;
+            --primary: #7C3AED;
+            --primary-hover: #6D28D9;
+            --primary-light: #EDE9FE;
+            --bg: #F1F5F9;
+            --surface: #FFFFFF;
+            --text: #1E293B;
+            --text-secondary: #64748B;
+            --text-muted: #94A3B8;
+            --border: #E2E8F0;
+            --success: #10B981;
+            --success-light: #D1FAE5;
+            --failed: #EF4444;
+            --failed-light: #FEE2E2;
+            --running: #3B82F6;
+            --running-light: #DBEAFE;
+            --pending: #94A3B8;
+            --pending-light: #F1F5F9;
+            --skipped: #F59E0B;
+            --skipped-light: #FEF3C7;
+            --shadow-sm: 0 1px 2px 0 rgba(0,0,0,0.05);
+            --shadow: 0 1px 3px 0 rgba(0,0,0,0.1), 0 1px 2px -1px rgba(0,0,0,0.1);
+            --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -2px rgba(0,0,0,0.1);
+            --radius: 8px;
+            --radius-lg: 12px;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
-        .header { background: #2c3e50; color: #fff; padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; }
-        .header h1 { font-size: 20px; }
-        .nav a { color: #bdc3c7; text-decoration: none; margin-left: 20px; font-size: 14px; }
-        .nav a:hover, .nav a.active { color: #fff; }
-        .container { max-width: 1200px; margin: 24px auto; padding: 0 16px; }
-        .card { background: var(--card); border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); padding: 20px; margin-bottom: 16px; }
-        .btn { display: inline-block; padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; text-decoration: none; }
-        .btn-primary { background: #3498DB; color: #fff; }
-        .btn-primary:hover { background: #2980B9; }
-        .btn-outline { background: #fff; color: #3498DB; border: 1px solid #3498DB; }
-        .btn-outline:hover { background: #ebf5fb; }
-        .btn-sm { padding: 4px 10px; font-size: 12px; }
-        .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
-        .badge-success { background: #d5f5e3; color: #27AE60; }
-        .badge-failed { background: #fadbd8; color: #C0392B; }
-        .badge-running { background: #d6eaf8; color: #2980B9; }
-        .badge-skipped { background: #fef9e7; color: #B9770E; }
-        .badge-pending { background: #eaeded; color: #7F8C8D; }
-        .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-        .log-panel { background: #1e1e1e; color: #d4d4d4; font-family: "Cascadia Code", Consolas, monospace; font-size: 13px; padding: 12px; border-radius: 8px; max-height: 400px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
-        .dag-svg { width: 100%; min-height: 300px; }
-        .step-node { cursor: pointer; }
-        .step-node rect { stroke-width: 2; rx: 8; }
-        .status-bar { display: flex; gap: 12px; align-items: center; margin: 12px 0; }
-        .progress { flex: 1; height: 8px; background: #e0e0e0; border-radius: 4px; overflow: hidden; }
-        .progress-fill { height: 100%; background: var(--success); transition: width 0.3s; }
-        .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #ccc; border-top-color: #3498DB; border-radius: 50%; animation: spin 0.8s linear infinite; }
-        @keyframes spin { to { transform: rotate(360deg); } }
+        body { font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans SC", sans-serif; background: var(--bg); color: var(--text); display: flex; min-height: 100vh; }
+
+        /* Sidebar */
+        .sidebar { width: var(--sidebar-w); background: #0F172A; color: #E2E8F0; display: flex; flex-direction: column; position: fixed; top: 0; left: 0; bottom: 0; z-index: 100; transition: transform 0.3s; }
+        .sidebar-brand { padding: 24px 20px 20px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+        .sidebar-brand .logo { font-size: 18px; font-weight: 700; color: #fff; letter-spacing: -0.3px; }
+        .sidebar-brand .logo span { color: #A78BFA; }
+        .sidebar-brand .ver { font-size: 11px; color: #64748B; margin-top: 2px; }
+        .sidebar-nav { flex: 1; padding: 12px 8px; }
+        .sidebar-nav a { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 6px; color: #94A3B8; text-decoration: none; font-size: 14px; transition: all 0.15s; margin-bottom: 2px; }
+        .sidebar-nav a:hover { color: #E2E8F0; background: rgba(255,255,255,0.05); }
+        .sidebar-nav a.active { color: #fff; background: rgba(124,58,237,0.3); font-weight: 500; }
+        .sidebar-nav a .icon { font-size: 18px; width: 24px; text-align: center; flex-shrink: 0; }
+        .sidebar-footer { padding: 12px 20px; border-top: 1px solid rgba(255,255,255,0.08); font-size: 11px; color: #475569; }
+
+        /* Main */
+        .main { margin-left: var(--sidebar-w); flex: 1; display: flex; flex-direction: column; }
+        .topbar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 50; }
+        .topbar h2 { font-size: 18px; font-weight: 600; }
+        .topbar .meta { font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 16px; }
+        .topbar .meta .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); display: inline-block; animation: pulse 2s infinite; }
+        @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+        .content { flex: 1; padding: 24px; max-width: 1400px; width: 100%; }
+
+        /* Cards */
+        .card { background: var(--surface); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); border: 1px solid var(--border); }
+        .card-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+        .card-header h4 { font-size: 15px; font-weight: 600; }
+        .card-body { padding: 20px; }
+
+        /* Buttons */
+        .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; text-decoration: none; transition: all 0.15s; line-height: 1.5; }
+        .btn-primary { background: var(--primary); color: #fff; }
+        .btn-primary:hover { background: var(--primary-hover); box-shadow: var(--shadow); }
+        .btn-outline { background: var(--surface); color: var(--text-secondary); border: 1px solid var(--border); }
+        .btn-outline:hover { background: var(--bg); color: var(--text); }
+        .btn-ghost { background: transparent; color: var(--text-secondary); }
+        .btn-ghost:hover { background: var(--bg); color: var(--text); }
+        .btn-sm { padding: 5px 10px; font-size: 12px; }
+        .btn-xs { padding: 3px 8px; font-size: 11px; border-radius: 4px; }
+        .btn-group { display: flex; gap: 8px; }
+
+        /* Badges */
+        .badge { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; border-radius: 100px; font-size: 12px; font-weight: 500; }
+        .badge-success { background: var(--success-light); color: #059669; }
+        .badge-failed { background: var(--failed-light); color: #DC2626; }
+        .badge-running { background: var(--running-light); color: #2563EB; }
+        .badge-skipped { background: var(--skipped-light); color: #D97706; }
+        .badge-pending { background: var(--pending-light); color: #64748B; }
+        .badge-dot { width: 6px; height: 6px; border-radius: 50%; }
+        .badge-dot.success { background: var(--success); }
+        .badge-dot.failed { background: var(--failed); }
+        .badge-dot.running { background: var(--running); animation: pulse 1.5s infinite; }
+        .badge-dot.pending { background: var(--pending); }
+
+        /* Tables */
         table { width: 100%; border-collapse: collapse; }
-        th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 14px; }
-        th { color: var(--muted); font-weight: 500; }
-        @media (max-width: 768px) { .grid-3 { grid-template-columns: 1fr; } }
+        th { text-align: left; padding: 10px 16px; font-size: 12px; font-weight: 500; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+        td { padding: 12px 16px; font-size: 14px; border-top: 1px solid var(--border); }
+        tr:hover { background: #F8FAFC; }
+
+        /* Log panel */
+        .log-panel { background: #1A1A2E; color: #CDD6F4; font-family: "JetBrains Mono", "Cascadia Code", "Fira Code", Consolas, monospace; font-size: 12.5px; padding: 14px; border-radius: var(--radius); overflow-y: auto; line-height: 1.7; }
+        .log-panel .log-time { color: #6C7086; }
+        .log-panel .log-step { color: #89B4FA; }
+        .log-panel .log-msg { color: #CDD6F4; }
+
+        /* DAG */
+        .dag-container { width: 100%; overflow-x: auto; }
+
+        /* Empty state */
+        .empty { text-align: center; padding: 48px 24px; color: var(--text-muted); }
+        .empty .empty-icon { font-size: 48px; margin-bottom: 12px; }
+        .empty p { font-size: 14px; margin-top: 4px; }
+
+        /* Grid */
+        .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+        .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+        .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+
+        /* Stats */
+        .stat-card { text-align: center; padding: 16px; }
+        .stat-card .stat-value { font-size: 28px; font-weight: 700; }
+        .stat-card .stat-label { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+
+        /* Progress bar */
+        .progress-bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+        .progress-bar .progress-fill { height: 100%; background: var(--primary); border-radius: 3px; transition: width 0.5s ease; }
+        .progress-fill.success { background: var(--success); }
+        .progress-fill.failed { background: var(--failed); }
+
+        /* Step timeline */
+        .step-list { display: flex; flex-direction: column; gap: 2px; }
+        .step-item { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 6px; transition: background 0.15s; }
+        .step-item:hover { background: var(--bg); }
+        .step-item .step-icon { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; flex-shrink: 0; }
+        .step-item .step-icon.success { background: var(--success-light); color: var(--success); }
+        .step-item .step-icon.failed { background: var(--failed-light); color: var(--failed); }
+        .step-item .step-icon.running { background: var(--running-light); color: var(--running); }
+        .step-item .step-icon.pending { background: var(--pending-light); color: var(--pending); }
+        .step-item .step-info { flex: 1; }
+        .step-item .step-name { font-size: 14px; font-weight: 500; }
+        .step-item .step-target { font-size: 12px; color: var(--text-muted); }
+
+        /* Animations */
+        @keyframes fadeIn { from { opacity:0; transform: translateY(8px); } to { opacity:1; transform: translateY(0); } }
+        .fade-in { animation: fadeIn 0.3s ease; }
+
+        /* Indicators */
+        .indicator { position: relative; }
+        .indicator::after { content: ''; position: absolute; top: 2px; right: 2px; width: 8px; height: 8px; border-radius: 50%; }
+        .indicator.success::after { background: var(--success); }
+        .indicator.failed::after { background: var(--failed); }
+        .indicator.running::after { background: var(--running); animation: pulse 1.5s infinite; }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .sidebar { transform: translateX(-100%); }
+            .sidebar.open { transform: translateX(0); }
+            .main { margin-left: 0; }
+            .grid-3, .grid-4 { grid-template-columns: 1fr; }
+            .grid-2 { grid-template-columns: 1fr; }
+            .content { padding: 16px; }
+        }
     </style>
 </head>
-<body x-data="{ activeTab: 'projects' }">
-    <div class="header">
-        <h1>⚡ 工作流编排器</h1>
-        <div class="nav">
-            <a href="/projects" :class="{ active: activeTab === 'projects' }" @click="activeTab='projects'">项目列表</a>
-            <a href="/history" :class="{ active: activeTab === 'history' }" @click="activeTab='history'">执行历史</a>
+<body x-data="{ page: 'projects' }">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <div class="logo"><span>&#9650;</span> Workflow</div>
+            <div class="ver">轻量级工作流编排器</div>
         </div>
-    </div>
-    <div class="container">
-        {{block "content" .}}{{end}}
+        <nav class="sidebar-nav">
+            <a href="/projects" :class="{ active: page === 'projects' }" @click="page='projects'">
+                <span class="icon">&#9632;</span> 项目列表
+            </a>
+            <a href="/history" :class="{ active: page === 'history' }" @click="page='history'">
+                <span class="icon">&#9776;</span> 执行历史
+            </a>
+        </nav>
+        <div class="sidebar-footer">v1.0 · Go stdlib</div>
+    </aside>
+
+    <!-- Main Content -->
+    <div class="main">
+        <div class="topbar">
+            <h2 x-text="page === 'projects' ? '项目列表' : '执行历史'"></h2>
+            <div class="meta">
+                <span class="dot"></span> 服务运行中
+            </div>
+        </div>
+        <div class="content">
+            {{block "content" .}}{{end}}
+        </div>
     </div>
 </body>
 </html>

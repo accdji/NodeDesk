@@ -1,30 +1,70 @@
 {{define "projects.html"}}
 {{template "layout.html" .}}
 {{block "content" .}}
-<h2 style="margin-bottom:20px;">项目列表</h2>
-
 <div x-data="projectList()" x-init="load()">
-    <div style="margin-bottom:16px;">
-        <button class="btn btn-outline btn-sm" @click="load()">刷新</button>
-        <span style="margin-left:12px;color:var(--muted);font-size:13px;" x-text="'共 ' + projects.length + ' 个项目'"></span>
+    <!-- Stats -->
+    <div class="grid-4" style="margin-bottom:24px;">
+        <div class="card stat-card">
+            <div class="stat-value" x-text="projects.length" style="color:var(--primary);">0</div>
+            <div class="stat-label">项目总数</div>
+        </div>
+        <div class="card stat-card">
+            <div class="stat-value" x-text="enabledCount" style="color:var(--success);">0</div>
+            <div class="stat-label">已启用</div>
+        </div>
+        <div class="card stat-card">
+            <div class="stat-value" x-text="disabledCount" style="color:var(--text-muted);">0</div>
+            <div class="stat-label">已停用</div>
+        </div>
+        <div class="card stat-card">
+            <div class="stat-value" x-text="workflowCount" style="color:var(--running);">0</div>
+            <div class="stat-label">工作流类型</div>
+        </div>
     </div>
 
-    <div class="grid-3">
+    <!-- Toolbar -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+        <div style="display:flex;align-items:center;gap:12px;">
+            <span style="font-size:14px;color:var(--text-secondary);">
+                共 <strong x-text="projects.length" style="color:var(--text);">0</strong> 个项目
+            </span>
+        </div>
+        <div class="btn-group">
+            <button class="btn btn-ghost btn-sm" @click="load()">刷新</button>
+        </div>
+    </div>
+
+    <!-- Project Cards -->
+    <div class="grid-3" style="margin-bottom:24px;">
         <template x-for="proj in projects" :key="proj.name">
-            <div class="card">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-                    <strong x-text="proj.name" style="font-size:16px;"></strong>
-                    <span class="badge" :class="proj.enabled ? 'badge-success' : 'badge-pending'"
-                          x-text="proj.enabled ? '启用' : '停用'"></span>
+            <div class="card fade-in" style="overflow:hidden;">
+                <!-- Card header with status indicator -->
+                <div style="padding:20px 20px 0;">
+                    <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:8px;">
+                        <div style="display:flex;align-items:center;gap:10px;">
+                            <div style="width:36px;height:36px;border-radius:8px;background:var(--primary-light);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:var(--primary);" x-text="proj.name.charAt(0).toUpperCase()"></div>
+                            <div>
+                                <div style="font-weight:600;font-size:15px;" x-text="proj.name"></div>
+                                <div style="font-size:12px;color:var(--text-muted);" x-text="'ID: ' + proj.project_id"></div>
+                            </div>
+                        </div>
+                        <span class="badge" :class="proj.enabled ? 'badge-success' : 'badge-pending'">
+                            <span class="badge-dot" :class="proj.enabled ? 'success' : 'pending'"></span>
+                            <span x-text="proj.enabled ? '启用' : '停用'"></span>
+                        </span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary);margin-top:4px;">
+                        <span>&#9776;</span>
+                        <span x-text="proj.workflow"></span>
+                    </div>
                 </div>
-                <div style="color:var(--muted);font-size:13px;margin-bottom:12px;">
-                    工作流: <span x-text="proj.workflow"></span> | ID: <span x-text="proj.project_id"></span>
-                </div>
-                <div style="display:flex;gap:8px;">
-                    <button class="btn btn-primary btn-sm"
+
+                <!-- Actions -->
+                <div style="padding:14px 20px 16px;display:flex;gap:8px;border-top:1px solid var(--border);margin-top:16px;background:#F8FAFC;">
+                    <button class="btn btn-primary btn-sm" style="flex:1;"
                             hx-post="/api/run/" x-bind:hx-post="'/api/run/' + proj.name"
                             hx-target="#run-result" hx-swap="innerHTML"
-                            @click="selectedProject = proj.name; $nextTick(() => { setTimeout(connectWS, 300); });">
+                            @click="selectedProject = proj.name; $nextTick(() => { setTimeout(() => { if (!window._sseInited) { initSSE(); window._sseInited = true; } }, 300); });">
                         执行
                     </button>
                     <button class="btn btn-outline btn-sm"
@@ -38,25 +78,41 @@
         </template>
     </div>
 
+    <!-- Empty state -->
+    <div x-show="projects.length === 0" class="card empty" style="display:none;">
+        <div class="empty-icon">&#128196;</div>
+        <p style="font-weight:500;">暂无项目</p>
+        <p>在 projects/ 目录下创建 pipeline.json 来添加项目</p>
+    </div>
+
+    <!-- Run Result -->
     <div id="run-result" style="margin-top:24px;"></div>
 
-    <!-- SSE 日志面板 -->
-    <div x-show="sseConnected" style="margin-top:16px;" x-init="initSSE()">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-            <strong>实时日志 (SSE)</strong>
-            <span style="font-size:12px;color:var(--muted);">
+    <!-- SSE Log Panel (hidden until connected) -->
+    <div x-show="sseConnected" class="card fade-in" style="margin-top:20px;overflow:hidden;" x-init="initSSE()">
+        <div class="card-header">
+            <h4 style="display:flex;align-items:center;gap:8px;">
                 <span class="spinner" x-show="running"></span>
-                <span x-text="running ? '执行中...' : '完成'"></span>
-            </span>
+                <span x-text="running ? '实时日志' : '执行完成'"></span>
+            </h4>
+            <div style="display:flex;align-items:center;gap:8px;">
+                <span class="badge" :class="running ? 'badge-running' : 'badge-success'" x-text="running ? '执行中' : '已完成'"></span>
+                <button class="btn btn-ghost btn-xs" @click="logs = []; sseConnected = false;">关闭</button>
+            </div>
         </div>
-        <div class="log-panel" id="log-output" x-ref="logPanel">
-            <template x-for="log in logs" :key="log._idx">
-                <div>
-                    <span style="color:#888;" x-text="log.timestamp"></span>
-                    <span style="color:#569CD6;margin-left:8px;" x-text="'[' + log.step_name + ']'"></span>
-                    <span style="margin-left:8px;" x-text="log.message"></span>
+        <div class="card-body" style="padding:0;">
+            <div class="log-panel" id="log-output" x-ref="logPanel" style="border-radius:0;max-height:360px;">
+                <template x-for="log in logs" :key="log._idx">
+                    <div>
+                        <span class="log-time" x-text="log.timestamp"></span>
+                        <span class="log-step" style="margin-left:8px;" x-text="'[' + log.step_name + ']'"></span>
+                        <span class="log-msg" style="margin-left:8px;" x-text="log.message"></span>
+                    </div>
+                </template>
+                <div x-show="logs.length === 0" style="color:var(--text-muted);">
+                    等待日志输出...
                 </div>
-            </template>
+            </div>
         </div>
     </div>
 </div>
@@ -72,6 +128,10 @@ function projectList() {
         running: false,
         _logIdx: 0,
 
+        get enabledCount() { return this.projects.filter(p => p.enabled).length; },
+        get disabledCount() { return this.projects.filter(p => !p.enabled).length; },
+        get workflowCount() { return [...new Set(this.projects.map(p => p.workflow))].length; },
+
         async load() {
             const res = await fetch('/api/projects');
             this.projects = await res.json();
@@ -86,7 +146,13 @@ function projectList() {
                             this.logs = [];
                             this._logIdx = 0;
                             this.running = true;
+                            this.sseConnected = true;
                             this.connectSSE(resp.run_id);
+                        }
+                        if (resp.plan) {
+                            this.logs = [{ _idx: 0, timestamp: '', step_name: 'PLAN', message: JSON.stringify(resp.plan, null, 2) }];
+                            this.sseConnected = true;
+                            this.running = false;
                         }
                     } catch(e) {}
                 }
@@ -96,7 +162,6 @@ function projectList() {
         connectSSE(runId) {
             if (this.es) { this.es.close(); }
             this.es = new EventSource('/api/sse/' + runId);
-            this.sseConnected = true;
 
             this.es.onmessage = (evt) => {
                 const msg = JSON.parse(evt.data);

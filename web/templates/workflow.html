@@ -2,55 +2,138 @@
 {{template "layout.html" .}}
 {{block "content" .}}
 <div x-data="workflowDetail('{{.Project}}')" x-init="load()">
-    <h2 style="margin-bottom:8px;">
-        <a href="/projects" style="color:var(--muted);text-decoration:none;font-size:14px;">项目列表</a> /
-        <span x-text="projectName"></span>
-    </h2>
-
-    <div style="margin:12px 0;display:flex;gap:8px;">
-        <button class="btn btn-primary btn-sm" @click="run(false)">执行</button>
-        <button class="btn btn-outline btn-sm" @click="run(true)">预览计划</button>
+    <!-- Breadcrumb -->
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:20px;font-size:13px;">
+        <a href="/projects" style="color:var(--text-muted);text-decoration:none;">项目列表</a>
+        <span style="color:var(--text-muted);">/</span>
+        <span style="font-weight:500;" x-text="projectName"></span>
     </div>
 
-    <!-- DAG 可视化 -->
-    <div class="card" x-show="dagNodes.length > 0">
-        <h4 style="margin-bottom:12px;">DAG 可视化</h4>
-        <div id="dag-container" class="dag-svg"></div>
-    </div>
-
-    <!-- 步骤状态 -->
-    <div class="card" x-show="steps.length > 0">
-        <h4 style="margin-bottom:12px;">步骤状态</h4>
-        <div class="status-bar">
-            <div class="progress"><div class="progress-fill" :style="{ width: progressPct + '%' }"></div></div>
-            <span style="font-size:13px;color:var(--muted);" x-text="okCount + '/' + steps.length"></span>
+    <!-- Toolbar -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+        <div style="display:flex;align-items:center;gap:16px;">
+            <div style="width:44px;height:44px;border-radius:10px;background:var(--primary-light);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;color:var(--primary);" x-text="projectName.charAt(0).toUpperCase()"></div>
+            <div>
+                <div style="font-weight:700;font-size:18px;" x-text="projectName"></div>
+                <div style="font-size:12px;color:var(--text-muted);">工作流详情</div>
+            </div>
         </div>
-        <table>
-            <thead><tr><th>步骤</th><th>状态</th><th>耗时</th><th>target</th></tr></thead>
-            <tbody>
-                <template x-for="s in steps" :key="s.step_name">
-                    <tr>
-                        <td x-text="s.step_name"></td>
-                        <td><span class="badge" :class="statusBadge(s.state)" x-text="statusLabel(s.state)"></span></td>
-                        <td x-text="s.duration ? (s.duration.toFixed(1) + 's') : '-'"></td>
-                        <td x-text="s.target"></td>
-                    </tr>
-                </template>
-            </tbody>
-        </table>
+        <div class="btn-group">
+            <button class="btn btn-primary" @click="run(false)">
+                <span>&#9654;</span> 执行
+            </button>
+            <button class="btn btn-outline" @click="run(true)">预览计划</button>
+        </div>
     </div>
 
-    <!-- 日志 -->
-    <div class="card" x-show="logs.length > 0">
-        <h4 style="margin-bottom:8px;">执行日志</h4>
-        <div class="log-panel" x-ref="logPanel">
-            <template x-for="log in logs" :key="log._idx">
-                <div>
-                    <span style="color:#888;" x-text="log.timestamp"></span>
-                    <span style="color:#569CD6;margin-left:8px;" x-text="'[' + log.step_name + ']'"></span>
-                    <span style="margin-left:8px;" x-text="log.message"></span>
+    <!-- Progress bar (visible during execution) -->
+    <div x-show="running || steps.length > 0" style="margin-bottom:20px;display:none;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px;font-size:13px;">
+            <span style="color:var(--text-secondary);">执行进度</span>
+            <span style="color:var(--text-muted);" x-text="okCount + '/' + steps.length"></span>
+        </div>
+        <div class="progress-bar">
+            <div class="progress-fill" :class="failedCount > 0 ? 'failed' : 'success'" :style="{ width: progressPct + '%' }"></div>
+        </div>
+    </div>
+
+    <div class="grid-2" style="margin-bottom:20px;">
+        <!-- DAG Visualization -->
+        <div class="card" style="grid-row:span 2;" x-show="dagNodes.length > 0">
+            <div class="card-header">
+                <h4>DAG 依赖图</h4>
+                <div style="display:flex;gap:12px;font-size:11px;color:var(--text-muted);">
+                    <span><span class="badge-dot success" style="display:inline-block;"></span> 成功</span>
+                    <span><span class="badge-dot failed" style="display:inline-block;"></span> 失败</span>
+                    <span><span class="badge-dot running" style="display:inline-block;"></span> 执行中</span>
+                    <span><span class="badge-dot pending" style="display:inline-block;"></span> 等待</span>
                 </div>
-            </template>
+            </div>
+            <div class="card-body">
+                <div id="dag-container" class="dag-container" style="min-height:320px;"></div>
+            </div>
+        </div>
+
+        <!-- Step Status -->
+        <div class="card" x-show="steps.length > 0">
+            <div class="card-header">
+                <h4>步骤列表</h4>
+            </div>
+            <div class="card-body" style="padding:0;">
+                <div class="step-list">
+                    <template x-for="s in steps" :key="s.step_name">
+                        <div class="step-item">
+                            <div class="step-icon" :class="s.state">
+                                <span x-show="s.state === 'success'">&#10003;</span>
+                                <span x-show="s.state === 'failed'">&#10007;</span>
+                                <span x-show="s.state === 'running'">&#9679;</span>
+                                <span x-show="s.state === 'pending' || s.state === ''">&#9679;</span>
+                                <span x-show="s.state === 'skipped'">&#9654;</span>
+                            </div>
+                            <div class="step-info">
+                                <div class="step-name" x-text="s.step_name"></div>
+                                <div class="step-target">
+                                    target: <span x-text="s.target || 'local'"></span>
+                                    <span x-show="s.duration"> &middot; </span>
+                                    <span x-show="s.duration" x-text="(s.duration || 0).toFixed(1) + 's'"></span>
+                                </div>
+                            </div>
+                            <span class="badge" :class="statusBadge(s.state)" x-text="statusLabel(s.state)"></span>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+
+        <!-- Preview steps (DAG only, no steps) -->
+        <div class="card" x-show="steps.length === 0 && dagNodes.length > 0">
+            <div class="card-header"><h4>工作流步骤</h4></div>
+            <div class="card-body" style="padding:0;">
+                <div class="step-list">
+                    <template x-for="node in dagNodes" :key="node.id">
+                        <div class="step-item">
+                            <div class="step-icon pending">&#9679;</div>
+                            <div class="step-info">
+                                <div class="step-name" x-text="node.label || node.id"></div>
+                                <div class="step-target">
+                                    <span x-show="node.deps && node.deps.length > 0" x-text="'依赖: ' + (node.deps || []).join(', ')"></span>
+                                    <span x-show="!node.deps || node.deps.length === 0">无依赖</span>
+                                </div>
+                            </div>
+                            <span class="badge badge-pending">等待执行</span>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Log Panel -->
+    <div class="card" x-show="logs.length > 0" style="margin-bottom:20px;">
+        <div class="card-header">
+            <h4>执行日志</h4>
+            <span style="font-size:12px;color:var(--text-muted);" x-text="logs.length + ' 行'"></span>
+        </div>
+        <div class="card-body" style="padding:0;">
+            <div class="log-panel" x-ref="logPanel" style="border-radius:0;max-height:400px;">
+                <template x-for="log in logs" :key="log._idx">
+                    <div>
+                        <span class="log-time" x-text="log.timestamp"></span>
+                        <span class="log-step" style="margin-left:8px;" x-text="'[' + log.step_name + ']'"></span>
+                        <span class="log-msg" style="margin-left:8px;" x-text="log.message"></span>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </div>
+
+    <!-- Plan preview (dry run) -->
+    <div class="card" x-show="logs.length > 0 && running === false && steps.length === 0" style="margin-bottom:20px;">
+        <div class="card-header"><h4>执行计划</h4></div>
+        <div class="card-body">
+            <div class="log-panel" style="background:#1E293B;">
+                <pre style="margin:0;white-space:pre-wrap;" x-text="logs[0] ? logs[0].message : ''"></pre>
+            </div>
         </div>
     </div>
 </div>
@@ -67,17 +150,23 @@ function workflowDetail(projectName) {
         running: false,
         progressPct: 0,
         okCount: 0,
+        failedCount: 0,
         _logIdx: 0,
 
         async load() {
-            // 加载插件信息作为步骤参考
             const pluginsRes = await fetch('/api/plugins');
             const plugins = await pluginsRes.json();
-            this.dagNodes = plugins.map(p => ({ id: p.name, label: p.label || p.name, status: 'pending' }));
-            // 构建边
+            this.dagNodes = plugins.map(p => ({
+                id: p.name,
+                label: p.label || p.name,
+                status: 'pending',
+                deps: p.depends_on || []
+            }));
             plugins.forEach(p => {
                 (p.depends_on || []).forEach(dep => {
-                    this.dagEdges.push({ from: dep, to: p.name });
+                    if (this.dagEdges.findIndex(e => e.from === dep && e.to === p.name) === -1) {
+                        this.dagEdges.push({ from: dep, to: p.name });
+                    }
                 });
             });
             if (this.dagNodes.length > 0) {
@@ -91,14 +180,19 @@ function workflowDetail(projectName) {
             const data = await res.json();
 
             if (data.plan) {
-                this.logs = [{ _idx: 0, timestamp: '', step_name: 'PLAN', message: '执行计划: ' + JSON.stringify(data.plan) }];
+                this.logs = [{ _idx: 0, timestamp: '', step_name: 'PLAN', message: JSON.stringify(data.plan, null, 2) }];
+                this.steps = [];
                 return;
             }
 
             if (data.run_id) {
                 this.logs = [];
+                this.steps = [];
                 this._logIdx = 0;
                 this.running = true;
+                this.okCount = 0;
+                this.failedCount = 0;
+                this.progressPct = 0;
                 this.connectSSE(data.run_id);
             }
         },
@@ -116,14 +210,12 @@ function workflowDetail(projectName) {
                         const panel = this.$refs.logPanel;
                         if (panel) panel.scrollTop = panel.scrollHeight;
                     });
-                    // 更新 DAG 节点状态
                     const node = this.dagNodes.find(n => n.id === msg.step_name);
-                    if (node && msg.message.includes('完成')) {
-                        node.status = 'success';
-                    } else if (node && msg.message.includes('失败')) {
-                        node.status = 'failed';
-                    } else if (node && msg.message.includes('开始执行')) {
-                        node.status = 'running';
+                    if (node) {
+                        if (msg.message.includes('开始执行')) node.status = 'running';
+                        else if (msg.message.includes('完成')) node.status = 'success';
+                        else if (msg.message.includes('失败')) node.status = 'failed';
+                        else if (msg.message.includes('跳过')) node.status = 'skipped';
                     }
                     this.$nextTick(() => this.drawDAG());
                 } else if (msg.type === 'completed') {
@@ -141,7 +233,14 @@ function workflowDetail(projectName) {
             if (data.steps) {
                 this.steps = data.steps;
                 this.okCount = data.steps.filter(s => s.state === 'success').length;
+                this.failedCount = data.steps.filter(s => s.state === 'failed').length;
                 this.progressPct = data.steps.length > 0 ? Math.round(this.okCount / data.steps.length * 100) : 0;
+                // Sync DAG node states
+                data.steps.forEach(s => {
+                    const node = this.dagNodes.find(n => n.id === s.step_name);
+                    if (node) node.status = s.state;
+                });
+                this.$nextTick(() => this.drawDAG());
             }
         },
 
@@ -157,49 +256,92 @@ function workflowDetail(projectName) {
             const container = document.getElementById('dag-container');
             if (!container || this.dagNodes.length === 0) return;
             container.innerHTML = '';
-            const width = container.clientWidth || 800;
-            const height = 300;
+            const width = Math.max(container.clientWidth, 600);
+            const height = 360;
+
             const svg = d3.select('#dag-container').append('svg').attr('width', width).attr('height', height);
 
-            const nodes = this.dagNodes.map((n, i) => ({
-                ...n, x: 100 + (i % Math.ceil(this.dagNodes.length / 2)) * 200,
-                y: 80 + Math.floor(i / Math.ceil(this.dagNodes.length / 2)) * 120
-            }));
+            // Simple layered layout
+            const levels = this.computeLevels();
+            const levelWidth = width / (levels.length + 1);
+            const colorMap = { success: '#10B981', failed: '#EF4444', running: '#3B82F6', skipped: '#F59E0B', pending: '#94A3B8' };
 
-            const colorMap = { success: '#2ECC71', failed: '#E74C3C', running: '#3498DB', skipped: '#F39C12', pending: '#95A5A6' };
-
-            // 画边
-            this.dagEdges.forEach(e => {
-                const from = nodes.find(n => n.id === e.from);
-                const to = nodes.find(n => n.id === e.to);
-                if (from && to) {
-                    svg.append('line')
-                        .attr('x1', from.x + 70).attr('y1', from.y)
-                        .attr('x2', to.x - 10).attr('y2', to.y)
-                        .attr('stroke', '#ccc').attr('stroke-width', 2)
-                        .attr('marker-end', 'url(#arrow)');
-                }
+            const nodes = this.dagNodes.map((n, i) => {
+                const level = levels.findIndex(l => l.includes(n.id));
+                const itemsInLevel = levels[level] ? levels[level].length : 1;
+                const idxInLevel = levels[level] ? levels[level].indexOf(n.id) : 0;
+                return {
+                    ...n,
+                    x: (level + 1) * levelWidth,
+                    y: (idxInLevel + 0.5) * (height / itemsInLevel)
+                };
             });
 
-            // 箭头标记
+            // Arrow marker
             svg.append('defs').append('marker')
-                .attr('id', 'arrow').attr('viewBox', '0 -5 10 10')
-                .attr('refX', 10).attr('refY', 0).attr('markerWidth', 6).attr('markerHeight', 6)
+                .attr('id', 'arrowhead').attr('viewBox', '0 0 10 10')
+                .attr('refX', 22).attr('refY', 5).attr('markerWidth', 6).attr('markerHeight', 6)
                 .attr('orient', 'auto')
-                .append('path').attr('d', 'M0,-5L10,0L0,5').attr('fill', '#ccc');
+                .append('path').attr('d', 'M0,0 L10,5 L0,10 Z').attr('fill', '#CBD5E1');
 
-            // 画节点
-            const g = svg.selectAll('g.node').data(nodes).enter().append('g').attr('class', 'step-node')
-                .attr('transform', d => `translate(${d.x},${d.y - 20})`);
+            // Edges
+            const nodeMap = {};
+            nodes.forEach(n => { nodeMap[n.id] = n; });
+
+            svg.selectAll('line').data(this.dagEdges).enter().append('line')
+                .attr('x1', d => (nodeMap[d.from] ? nodeMap[d.from].x + 70 : 0))
+                .attr('y1', d => (nodeMap[d.from] ? nodeMap[d.from].y : 0))
+                .attr('x2', d => (nodeMap[d.to] ? nodeMap[d.to].x - 0 : 0))
+                .attr('y2', d => (nodeMap[d.to] ? nodeMap[d.to].y : 0))
+                .attr('stroke', '#CBD5E1').attr('stroke-width', 2)
+                .attr('marker-end', 'url(#arrowhead)');
+
+            // Node groups
+            const g = svg.selectAll('g.node').data(nodes).enter().append('g')
+                .attr('transform', d => `translate(${d.x - 70},${d.y - 22})`);
 
             g.append('rect')
-                .attr('width', 140).attr('height', 40)
-                .attr('fill', d => colorMap[d.status] || '#95A5A6')
-                .attr('rx', 8);
+                .attr('width', 140).attr('height', 44)
+                .attr('rx', 10)
+                .attr('fill', d => colorMap[d.status] || '#94A3B8')
+                .attr('filter', 'url(#shadow)');
 
-            g.append('text').attr('x', 70).attr('y', 25)
+            // Subtle shadow
+            const filter = svg.append('defs').append('filter').attr('id', 'shadow');
+            filter.append('feDropShadow').attr('dx', 0).attr('dy', 2).attr('stdDeviation', 2).attr('flood-opacity', 0.15);
+
+            g.append('text')
+                .attr('x', 70).attr('y', 27)
                 .attr('text-anchor', 'middle').attr('fill', '#fff')
-                .attr('font-size', 13).text(d => d.label);
+                .attr('font-size', 13).attr('font-weight', 600)
+                .attr('font-family', '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif')
+                .text(d => d.label);
+        },
+
+        computeLevels() {
+            if (this.dagNodes.length === 0) return [];
+            let levels = [];
+            let placed = new Set();
+            const allIds = this.dagNodes.map(n => n.id);
+
+            while (placed.size < allIds.length) {
+                let current = [];
+                allIds.forEach(id => {
+                    if (placed.has(id)) return;
+                    const deps = this.dagEdges.filter(e => e.to === id).map(e => e.from);
+                    if (deps.every(d => placed.has(d))) {
+                        current.push(id);
+                    }
+                });
+                if (current.length === 0) {
+                    // Fallback: place unplaced nodes
+                    allIds.forEach(id => { if (!placed.has(id)) { current.push(id); placed.add(id); } });
+                } else {
+                    current.forEach(id => placed.add(id));
+                }
+                levels.push(current);
+            }
+            return levels;
         }
     };
 }

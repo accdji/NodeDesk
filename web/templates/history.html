@@ -2,48 +2,129 @@
 {{template "layout.html" .}}
 {{block "content" .}}
 <div x-data="historyList()" x-init="load()">
-    <h2 style="margin-bottom:20px;">执行历史</h2>
+    <!-- Stats -->
+    <div class="grid-4" style="margin-bottom:24px;">
+        <div class="card stat-card">
+            <div class="stat-value" x-text="runs.length" style="color:var(--primary);">0</div>
+            <div class="stat-label">总执行次数</div>
+        </div>
+        <div class="card stat-card">
+            <div class="stat-value" x-text="successCount" style="color:var(--success);">0</div>
+            <div class="stat-label">成功</div>
+        </div>
+        <div class="card stat-card">
+            <div class="stat-value" x-text="failedCount" style="color:var(--failed);">0</div>
+            <div class="stat-label">失败</div>
+        </div>
+        <div class="card stat-card">
+            <div class="stat-value" x-text="runningCount" style="color:var(--running);">0</div>
+            <div class="stat-label">运行中</div>
+        </div>
+    </div>
 
-    <template x-if="runs.length === 0">
-        <div class="card" style="text-align:center;color:var(--muted);padding:40px;">暂无执行记录</div>
-    </template>
+    <!-- Filters -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+        <div style="display:flex;align-items:center;gap:12px;">
+            <span style="font-size:14px;color:var(--text-secondary);">
+                共 <strong x-text="filteredRuns.length" style="color:var(--text);">0</strong> 条记录
+            </span>
+            <div style="display:flex;gap:4px;">
+                <button class="btn btn-xs" :class="filter === 'all' ? 'btn-primary' : 'btn-ghost'" @click="filter='all'">全部</button>
+                <button class="btn btn-xs" :class="filter === 'success' ? 'btn-primary' : 'btn-ghost'" @click="filter='success'"
+                        style="background:var(--success-light);color:#059669;" x-show="filter==='success' || true">成功</button>
+                <button class="btn btn-xs" :class="filter === 'failed' ? 'btn-primary' : 'btn-ghost'" @click="filter='failed'"
+                        style="background:var(--failed-light);color:#DC2626;" x-show="filter==='failed' || true">失败</button>
+                <button class="btn btn-xs" :class="filter === 'running' ? 'btn-primary' : 'btn-ghost'" @click="filter='running'"
+                        style="background:var(--running-light);color:#2563EB;" x-show="filter==='running' || true">运行中</button>
+            </div>
+        </div>
+        <button class="btn btn-ghost btn-sm" @click="load()">刷新</button>
+    </div>
 
-    <template x-for="run in runs" :key="run.id">
-        <div class="card" style="cursor:pointer;" @click="toggle(run.id)">
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-                <div>
-                    <strong x-text="run.project_name"></strong>
-                    <span style="color:var(--muted);margin-left:12px;font-size:13px;" x-text="run.workflow_name"></span>
+    <!-- Empty state -->
+    <div x-show="runs.length === 0" class="card empty">
+        <div class="empty-icon">&#9776;</div>
+        <p style="font-weight:500;">暂无执行记录</p>
+        <p>执行任意项目的任务后，记录将在此显示</p>
+    </div>
+
+    <!-- History list -->
+    <template x-for="(run, idx) in filteredRuns" :key="run.id">
+        <div class="card fade-in" style="margin-bottom:12px;overflow:hidden;"
+             :style="'animation-delay:' + (idx * 30) + 'ms'">
+            <div style="padding:16px 20px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;"
+                 @click="toggle(run.id)">
+                <div style="display:flex;align-items:center;gap:16px;flex:1;">
+                    <!-- Status icon -->
+                    <div style="width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;"
+                         :style="statusIconStyle(run.status)">
+                        <span x-show="run.status === 'success'" style="color:var(--success);">&#10003;</span>
+                        <span x-show="run.status === 'failed'" style="color:var(--failed);">&#10007;</span>
+                        <span x-show="run.status === 'running'" class="spinner"></span>
+                        <span x-show="!['success','failed','running'].includes(run.status)" style="color:var(--text-muted);">&#9679;</span>
+                    </div>
+                    <!-- Info -->
+                    <div style="flex:1;">
+                        <div style="display:flex;align-items:center;gap:10px;margin-bottom:2px;">
+                            <span style="font-weight:600;font-size:14px;" x-text="run.project_name"></span>
+                            <span style="font-size:12px;color:var(--text-muted);" x-text="run.workflow_name"></span>
+                        </div>
+                        <div style="font-size:12px;color:var(--text-muted);display:flex;gap:16px;">
+                            <span x-text="'Run ID: ' + run.id.substring(0, 12) + '...'"></span>
+                            <span x-text="fmtTime(run.created_at)"></span>
+                        </div>
+                    </div>
                 </div>
                 <div style="display:flex;align-items:center;gap:12px;">
-                    <span class="badge" :class="'badge-' + run.status" x-text="statusLabel(run.status)"></span>
-                    <span style="font-size:12px;color:var(--muted);" x-text="fmtTime(run.created_at)"></span>
+                    <span class="badge" :class="statusBadge(run.status)" x-text="statusLabel(run.status)"></span>
+                    <span style="color:var(--text-muted);font-size:12px;" x-text="expanded === run.id ? '收起' : '展开'"></span>
                 </div>
             </div>
 
-            <!-- 展开详情 -->
-            <div x-show="expanded === run.id" style="margin-top:16px;" x-data="{ steps: [], logs: [] }"
-                 x-init="loadDetail(run.id).then(d => { steps = d.steps || []; logs = d.logs || []; })">
-                <table x-show="steps.length > 0">
-                    <thead><tr><th>步骤</th><th>状态</th><th>耗时</th></tr></thead>
-                    <tbody>
-                        <template x-for="s in steps" :key="s.step_name">
-                            <tr>
-                                <td x-text="s.step_name"></td>
-                                <td><span class="badge" :class="'badge-' + s.state" x-text="statusLabel(s.state)"></span></td>
-                                <td x-text="s.duration ? (s.duration.toFixed(1) + 's') : '-'"></td>
-                            </tr>
+            <!-- Expanded detail panel -->
+            <div x-show="expanded === run.id"
+                 style="border-top:1px solid var(--border);background:#F8FAFC;"
+                 x-data="{ detail: null }"
+                 x-init="loadDetail(run.id).then(d => { detail = d; })">
+                <!-- Loading -->
+                <div x-show="!detail" style="padding:24px;text-align:center;color:var(--text-muted);">
+                    <span class="spinner"></span> 加载中...
+                </div>
+                <!-- Steps table -->
+                <div x-show="detail && detail.steps && detail.steps.length > 0" style="padding:16px 20px;">
+                    <div style="font-size:13px;font-weight:600;margin-bottom:8px;color:var(--text-secondary);">步骤详情</div>
+                    <table>
+                        <thead><tr><th>步骤</th><th>状态</th><th>Target</th><th>耗时</th></tr></thead>
+                        <tbody>
+                            <template x-for="s in detail.steps" :key="s.step_name">
+                                <tr>
+                                    <td style="font-weight:500;" x-text="s.step_name"></td>
+                                    <td><span class="badge" :class="'badge-' + s.state" x-text="s.state"></span></td>
+                                    <td x-text="s.target || '-'" style="color:var(--text-muted);"></td>
+                                    <td x-text="s.duration ? (s.duration || 0).toFixed(1) + 's' : '-'" style="color:var(--text-muted);"></td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+                <!-- No steps -->
+                <div x-show="detail && (!detail.steps || detail.steps.length === 0)" style="padding:24px;text-align:center;color:var(--text-muted);">
+                    暂无步骤信息
+                </div>
+                <!-- Logs (last 30 lines) -->
+                <div x-show="detail && detail.logs && detail.logs.length > 0" style="padding:0 20px 16px;">
+                    <div style="font-size:13px;font-weight:600;margin-bottom:8px;color:var(--text-secondary);">
+                        执行日志 <span style="font-weight:400;color:var(--text-muted);" x-text="'(最后 ' + Math.min(30, detail.logs.length) + ' 行)'"></span>
+                    </div>
+                    <div class="log-panel" style="max-height:200px;">
+                        <template x-for="log in detail.logs.slice(-30)" :key="log.timestamp + log.message">
+                            <div>
+                                <span class="log-time" x-text="log.timestamp"></span>
+                                <span class="log-step" style="margin-left:8px;" x-text="'[' + log.step_name + ']'"></span>
+                                <span class="log-msg" style="margin-left:8px;" x-text="log.message"></span>
+                            </div>
                         </template>
-                    </tbody>
-                </table>
-                <div class="log-panel" style="max-height:200px;margin-top:8px;" x-show="logs.length > 0">
-                    <template x-for="log in logs.slice(-50)" :key="log.id">
-                        <div>
-                            <span style="color:#888;" x-text="log.timestamp"></span>
-                            <span style="color:#569CD6;margin-left:8px;" x-text="'[' + log.step_name + ']'"></span>
-                            <span style="margin-left:8px;" x-text="log.message"></span>
-                        </div>
-                    </template>
+                    </div>
                 </div>
             </div>
         </div>
@@ -55,6 +136,16 @@ function historyList() {
     return {
         runs: [],
         expanded: null,
+        filter: 'all',
+
+        get successCount() { return this.runs.filter(r => r.status === 'success').length; },
+        get failedCount() { return this.runs.filter(r => r.status === 'failed').length; },
+        get runningCount() { return this.runs.filter(r => r.status === 'running').length; },
+
+        get filteredRuns() {
+            if (this.filter === 'all') return this.runs;
+            return this.runs.filter(r => r.status === this.filter);
+        },
 
         async load() {
             const res = await fetch('/api/history');
@@ -72,8 +163,20 @@ function historyList() {
             return { running: '运行中', success: '成功', failed: '失败' }[s] || s;
         },
 
+        statusBadge(s) {
+            return { success: 'badge-success', failed: 'badge-failed', running: 'badge-running' }[s] || 'badge-pending';
+        },
+
+        statusIconStyle(s) {
+            return {
+                success: 'background:#D1FAE5;',
+                failed: 'background:#FEE2E2;',
+                running: 'background:#DBEAFE;'
+            }[s] || 'background:#F1F5F9;';
+        },
+
         fmtTime(t) {
-            return t ? new Date(t).toLocaleString('zh-CN') : '';
+            return t ? new Date(t).toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit' }) : '';
         }
     };
 }
