@@ -1,0 +1,208 @@
+{{define "workflow.html"}}
+{{template "layout.html" .}}
+{{block "content" .}}
+<div x-data="workflowDetail('{{.Project}}')" x-init="load()">
+    <h2 style="margin-bottom:8px;">
+        <a href="/projects" style="color:var(--muted);text-decoration:none;font-size:14px;">项目列表</a> /
+        <span x-text="projectName"></span>
+    </h2>
+
+    <div style="margin:12px 0;display:flex;gap:8px;">
+        <button class="btn btn-primary btn-sm" @click="run(false)">执行</button>
+        <button class="btn btn-outline btn-sm" @click="run(true)">预览计划</button>
+    </div>
+
+    <!-- DAG 可视化 -->
+    <div class="card" x-show="dagNodes.length > 0">
+        <h4 style="margin-bottom:12px;">DAG 可视化</h4>
+        <div id="dag-container" class="dag-svg"></div>
+    </div>
+
+    <!-- 步骤状态 -->
+    <div class="card" x-show="steps.length > 0">
+        <h4 style="margin-bottom:12px;">步骤状态</h4>
+        <div class="status-bar">
+            <div class="progress"><div class="progress-fill" :style="{ width: progressPct + '%' }"></div></div>
+            <span style="font-size:13px;color:var(--muted);" x-text="okCount + '/' + steps.length"></span>
+        </div>
+        <table>
+            <thead><tr><th>步骤</th><th>状态</th><th>耗时</th><th>target</th></tr></thead>
+            <tbody>
+                <template x-for="s in steps" :key="s.step_name">
+                    <tr>
+                        <td x-text="s.step_name"></td>
+                        <td><span class="badge" :class="statusBadge(s.state)" x-text="statusLabel(s.state)"></span></td>
+                        <td x-text="s.duration ? (s.duration.toFixed(1) + 's') : '-'"></td>
+                        <td x-text="s.target"></td>
+                    </tr>
+                </template>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- 日志 -->
+    <div class="card" x-show="logs.length > 0">
+        <h4 style="margin-bottom:8px;">执行日志</h4>
+        <div class="log-panel" x-ref="logPanel">
+            <template x-for="log in logs" :key="log._idx">
+                <div>
+                    <span style="color:#888;" x-text="log.timestamp"></span>
+                    <span style="color:#569CD6;margin-left:8px;" x-text="'[' + log.step_name + ']'"></span>
+                    <span style="margin-left:8px;" x-text="log.message"></span>
+                </div>
+            </template>
+        </div>
+    </div>
+</div>
+
+<script>
+function workflowDetail(projectName) {
+    return {
+        projectName: projectName,
+        steps: [],
+        logs: [],
+        dagNodes: [],
+        dagEdges: [],
+        es: null,
+        running: false,
+        progressPct: 0,
+        okCount: 0,
+        _logIdx: 0,
+
+        async load() {
+            // 加载插件信息作为步骤参考
+            const pluginsRes = await fetch('/api/plugins');
+            const plugins = await pluginsRes.json();
+            this.dagNodes = plugins.map(p => ({ id: p.name, label: p.label || p.name, status: 'pending' }));
+            // 构建边
+            plugins.forEach(p => {
+                (p.depends_on || []).forEach(dep => {
+                    this.dagEdges.push({ from: dep, to: p.name });
+                });
+            });
+            if (this.dagNodes.length > 0) {
+                this.$nextTick(() => this.drawDAG());
+            }
+        },
+
+        async run(dryRun) {
+            const url = '/api/run/' + this.projectName + (dryRun ? '?dry=1' : '');
+            const res = await fetch(url, { method: 'POST' });
+            const data = await res.json();
+
+            if (data.plan) {
+                this.logs = [{ _idx: 0, timestamp: '', step_name: 'PLAN', message: '执行计划: ' + JSON.stringify(data.plan) }];
+                return;
+            }
+
+            if (data.run_id) {
+                this.logs = [];
+                this._logIdx = 0;
+                this.running = true;
+                this.connectSSE(data.run_id);
+            }
+        },
+
+        connectSSE(runId) {
+            if (this.es) { this.es.close(); }
+            this.es = new EventSource('/api/sse/' + runId);
+
+            this.es.onmessage = (evt) => {
+                const msg = JSON.parse(evt.data);
+                if (msg.type === 'log') {
+                    msg._idx = this._logIdx++;
+                    this.logs.push(msg);
+                    this.$nextTick(() => {
+                        const panel = this.$refs.logPanel;
+                        if (panel) panel.scrollTop = panel.scrollHeight;
+                    });
+                    // 更新 DAG 节点状态
+                    const node = this.dagNodes.find(n => n.id === msg.step_name);
+                    if (node && msg.message.includes('完成')) {
+                        node.status = 'success';
+                    } else if (node && msg.message.includes('失败')) {
+                        node.status = 'failed';
+                    } else if (node && msg.message.includes('开始执行')) {
+                        node.status = 'running';
+                    }
+                    this.$nextTick(() => this.drawDAG());
+                } else if (msg.type === 'completed') {
+                    this.running = false;
+                    this.loadHistory(runId);
+                }
+            };
+
+            this.es.onerror = () => { this.running = false; };
+        },
+
+        async loadHistory(runId) {
+            const res = await fetch('/api/history/' + runId);
+            const data = await res.json();
+            if (data.steps) {
+                this.steps = data.steps;
+                this.okCount = data.steps.filter(s => s.state === 'success').length;
+                this.progressPct = data.steps.length > 0 ? Math.round(this.okCount / data.steps.length * 100) : 0;
+            }
+        },
+
+        statusLabel(state) {
+            return { pending: '等待', running: '运行中', success: '成功', failed: '失败', skipped: '已跳过' }[state] || state;
+        },
+
+        statusBadge(state) {
+            return 'badge-' + ({ success: 'success', failed: 'failed', running: 'running', skipped: 'skipped', pending: 'pending' }[state] || 'pending');
+        },
+
+        drawDAG() {
+            const container = document.getElementById('dag-container');
+            if (!container || this.dagNodes.length === 0) return;
+            container.innerHTML = '';
+            const width = container.clientWidth || 800;
+            const height = 300;
+            const svg = d3.select('#dag-container').append('svg').attr('width', width).attr('height', height);
+
+            const nodes = this.dagNodes.map((n, i) => ({
+                ...n, x: 100 + (i % Math.ceil(this.dagNodes.length / 2)) * 200,
+                y: 80 + Math.floor(i / Math.ceil(this.dagNodes.length / 2)) * 120
+            }));
+
+            const colorMap = { success: '#2ECC71', failed: '#E74C3C', running: '#3498DB', skipped: '#F39C12', pending: '#95A5A6' };
+
+            // 画边
+            this.dagEdges.forEach(e => {
+                const from = nodes.find(n => n.id === e.from);
+                const to = nodes.find(n => n.id === e.to);
+                if (from && to) {
+                    svg.append('line')
+                        .attr('x1', from.x + 70).attr('y1', from.y)
+                        .attr('x2', to.x - 10).attr('y2', to.y)
+                        .attr('stroke', '#ccc').attr('stroke-width', 2)
+                        .attr('marker-end', 'url(#arrow)');
+                }
+            });
+
+            // 箭头标记
+            svg.append('defs').append('marker')
+                .attr('id', 'arrow').attr('viewBox', '0 -5 10 10')
+                .attr('refX', 10).attr('refY', 0).attr('markerWidth', 6).attr('markerHeight', 6)
+                .attr('orient', 'auto')
+                .append('path').attr('d', 'M0,-5L10,0L0,5').attr('fill', '#ccc');
+
+            // 画节点
+            const g = svg.selectAll('g.node').data(nodes).enter().append('g').attr('class', 'step-node')
+                .attr('transform', d => `translate(${d.x},${d.y - 20})`);
+
+            g.append('rect')
+                .attr('width', 140).attr('height', 40)
+                .attr('fill', d => colorMap[d.status] || '#95A5A6')
+                .attr('rx', 8);
+
+            g.append('text').attr('x', 70).attr('y', 25)
+                .attr('text-anchor', 'middle').attr('fill', '#fff')
+                .attr('font-size', 13).text(d => d.label);
+        }
+    };
+}
+</script>
+{{end}}
+{{end}}

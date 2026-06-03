@@ -1,0 +1,31 @@
+{
+  "servers": {
+    "my_server": {
+      "host": "${ssh_IP}",
+      "port": 22,
+      "username": "${ssh_name}",
+      "password": "${ssh_Password}",
+      "remote_base": "/data/workflow",
+      "python": "python3",
+      "paths": {
+        "C:/local/path": "/remote/path"
+      }
+    }
+  },
+  "workflows": {
+    "standard": {
+      "label": "标准流程",
+      "steps": [
+        {"plugin": "step_a", "target": "local", "runtime": "python", "script": "tasks/step_a.py", "depends_on": []},
+        {"plugin": "step_b", "target": "local", "runtime": "python", "script": "tasks/step_b.py", "depends_on": ["step_a"]},
+        {"plugin": "step_c", "target": "ssh",  "runtime": "python", "script": "tasks/step_c.py", "depends_on": ["step_b"]}
+      ]
+    }
+  },
+  "projects": [
+    {"name": "example", "project_id": "001", "workflow": "standard", "enabled": false}
+  ],
+  "global": {
+    "work_dir": "."
+  }
+}

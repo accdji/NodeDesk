@@ -1,0 +1,82 @@
+{{define "history.html"}}
+{{template "layout.html" .}}
+{{block "content" .}}
+<div x-data="historyList()" x-init="load()">
+    <h2 style="margin-bottom:20px;">执行历史</h2>
+
+    <template x-if="runs.length === 0">
+        <div class="card" style="text-align:center;color:var(--muted);padding:40px;">暂无执行记录</div>
+    </template>
+
+    <template x-for="run in runs" :key="run.id">
+        <div class="card" style="cursor:pointer;" @click="toggle(run.id)">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+                <div>
+                    <strong x-text="run.project_name"></strong>
+                    <span style="color:var(--muted);margin-left:12px;font-size:13px;" x-text="run.workflow_name"></span>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px;">
+                    <span class="badge" :class="'badge-' + run.status" x-text="statusLabel(run.status)"></span>
+                    <span style="font-size:12px;color:var(--muted);" x-text="fmtTime(run.created_at)"></span>
+                </div>
+            </div>
+
+            <!-- 展开详情 -->
+            <div x-show="expanded === run.id" style="margin-top:16px;" x-data="{ steps: [], logs: [] }"
+                 x-init="loadDetail(run.id).then(d => { steps = d.steps || []; logs = d.logs || []; })">
+                <table x-show="steps.length > 0">
+                    <thead><tr><th>步骤</th><th>状态</th><th>耗时</th></tr></thead>
+                    <tbody>
+                        <template x-for="s in steps" :key="s.step_name">
+                            <tr>
+                                <td x-text="s.step_name"></td>
+                                <td><span class="badge" :class="'badge-' + s.state" x-text="statusLabel(s.state)"></span></td>
+                                <td x-text="s.duration ? (s.duration.toFixed(1) + 's') : '-'"></td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+                <div class="log-panel" style="max-height:200px;margin-top:8px;" x-show="logs.length > 0">
+                    <template x-for="log in logs.slice(-50)" :key="log.id">
+                        <div>
+                            <span style="color:#888;" x-text="log.timestamp"></span>
+                            <span style="color:#569CD6;margin-left:8px;" x-text="'[' + log.step_name + ']'"></span>
+                            <span style="margin-left:8px;" x-text="log.message"></span>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+    </template>
+</div>
+
+<script>
+function historyList() {
+    return {
+        runs: [],
+        expanded: null,
+
+        async load() {
+            const res = await fetch('/api/history');
+            this.runs = await res.json();
+        },
+
+        toggle(id) { this.expanded = this.expanded === id ? null : id; },
+
+        async loadDetail(id) {
+            const res = await fetch('/api/history/' + id);
+            return await res.json();
+        },
+
+        statusLabel(s) {
+            return { running: '运行中', success: '成功', failed: '失败' }[s] || s;
+        },
+
+        fmtTime(t) {
+            return t ? new Date(t).toLocaleString('zh-CN') : '';
+        }
+    };
+}
+</script>
+{{end}}
+{{end}}

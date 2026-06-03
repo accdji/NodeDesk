@@ -1,0 +1,125 @@
+{{define "projects.html"}}
+{{template "layout.html" .}}
+{{block "content" .}}
+<h2 style="margin-bottom:20px;">项目列表</h2>
+
+<div x-data="projectList()" x-init="load()">
+    <div style="margin-bottom:16px;">
+        <button class="btn btn-outline btn-sm" @click="load()">刷新</button>
+        <span style="margin-left:12px;color:var(--muted);font-size:13px;" x-text="'共 ' + projects.length + ' 个项目'"></span>
+    </div>
+
+    <div class="grid-3">
+        <template x-for="proj in projects" :key="proj.name">
+            <div class="card">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                    <strong x-text="proj.name" style="font-size:16px;"></strong>
+                    <span class="badge" :class="proj.enabled ? 'badge-success' : 'badge-pending'"
+                          x-text="proj.enabled ? '启用' : '停用'"></span>
+                </div>
+                <div style="color:var(--muted);font-size:13px;margin-bottom:12px;">
+                    工作流: <span x-text="proj.workflow"></span> | ID: <span x-text="proj.project_id"></span>
+                </div>
+                <div style="display:flex;gap:8px;">
+                    <button class="btn btn-primary btn-sm"
+                            hx-post="/api/run/" x-bind:hx-post="'/api/run/' + proj.name"
+                            hx-target="#run-result" hx-swap="innerHTML"
+                            @click="selectedProject = proj.name; $nextTick(() => { setTimeout(connectWS, 300); });">
+                        执行
+                    </button>
+                    <button class="btn btn-outline btn-sm"
+                            hx-post="/api/run/" x-bind:hx-post="'/api/run/' + proj.name + '?dry=1'"
+                            hx-target="#run-result" hx-swap="innerHTML">
+                        预览
+                    </button>
+                    <a class="btn btn-outline btn-sm" :href="'/workflow/' + proj.name">详情</a>
+                </div>
+            </div>
+        </template>
+    </div>
+
+    <div id="run-result" style="margin-top:24px;"></div>
+
+    <!-- SSE 日志面板 -->
+    <div x-show="sseConnected" style="margin-top:16px;" x-init="initSSE()">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <strong>实时日志 (SSE)</strong>
+            <span style="font-size:12px;color:var(--muted);">
+                <span class="spinner" x-show="running"></span>
+                <span x-text="running ? '执行中...' : '完成'"></span>
+            </span>
+        </div>
+        <div class="log-panel" id="log-output" x-ref="logPanel">
+            <template x-for="log in logs" :key="log._idx">
+                <div>
+                    <span style="color:#888;" x-text="log.timestamp"></span>
+                    <span style="color:#569CD6;margin-left:8px;" x-text="'[' + log.step_name + ']'"></span>
+                    <span style="margin-left:8px;" x-text="log.message"></span>
+                </div>
+            </template>
+        </div>
+    </div>
+</div>
+
+<script>
+function projectList() {
+    return {
+        projects: [],
+        logs: [],
+        selectedProject: '',
+        es: null,
+        sseConnected: false,
+        running: false,
+        _logIdx: 0,
+
+        async load() {
+            const res = await fetch('/api/projects');
+            this.projects = await res.json();
+        },
+
+        initSSE() {
+            document.body.addEventListener('htmx:afterRequest', (evt) => {
+                if (evt.detail.pathInfo && evt.detail.pathInfo.requestPath.startsWith('/api/run/')) {
+                    try {
+                        const resp = JSON.parse(evt.detail.xhr.responseText);
+                        if (resp.run_id && !resp.dry_run) {
+                            this.logs = [];
+                            this._logIdx = 0;
+                            this.running = true;
+                            this.connectSSE(resp.run_id);
+                        }
+                    } catch(e) {}
+                }
+            });
+        },
+
+        connectSSE(runId) {
+            if (this.es) { this.es.close(); }
+            this.es = new EventSource('/api/sse/' + runId);
+            this.sseConnected = true;
+
+            this.es.onmessage = (evt) => {
+                const msg = JSON.parse(evt.data);
+                if (msg.type === 'log') {
+                    msg._idx = this._logIdx++;
+                    this.logs.push(msg);
+                    this.$nextTick(() => {
+                        const panel = this.$refs.logPanel;
+                        if (panel) panel.scrollTop = panel.scrollHeight;
+                    });
+                } else if (msg.type === 'completed') {
+                    this.running = false;
+                    setTimeout(() => this.load(), 500);
+                }
+            };
+
+            this.es.onerror = () => {
+                this.sseConnected = false;
+                this.running = false;
+            };
+        }
+    };
+}
+</script>
+{{end}}
+{{end}}

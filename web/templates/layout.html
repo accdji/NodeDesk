@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>工作流编排器</title>
+    <script src="https://unpkg.com/htmx.org@1.9.19"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        :root {
+            --bg: #f5f5f5;
+            --card: #fff;
+            --text: #333;
+            --muted: #888;
+            --success: #2ECC71;
+            --failed: #E74C3C;
+            --running: #3498DB;
+            --pending: #95A5A6;
+            --skipped: #F39C12;
+            --border: #e0e0e0;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
+        .header { background: #2c3e50; color: #fff; padding: 16px 24px; display: flex; align-items: center; justify-content: space-between; }
+        .header h1 { font-size: 20px; }
+        .nav a { color: #bdc3c7; text-decoration: none; margin-left: 20px; font-size: 14px; }
+        .nav a:hover, .nav a.active { color: #fff; }
+        .container { max-width: 1200px; margin: 24px auto; padding: 0 16px; }
+        .card { background: var(--card); border-radius: 8px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); padding: 20px; margin-bottom: 16px; }
+        .btn { display: inline-block; padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; text-decoration: none; }
+        .btn-primary { background: #3498DB; color: #fff; }
+        .btn-primary:hover { background: #2980B9; }
+        .btn-outline { background: #fff; color: #3498DB; border: 1px solid #3498DB; }
+        .btn-outline:hover { background: #ebf5fb; }
+        .btn-sm { padding: 4px 10px; font-size: 12px; }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+        .badge-success { background: #d5f5e3; color: #27AE60; }
+        .badge-failed { background: #fadbd8; color: #C0392B; }
+        .badge-running { background: #d6eaf8; color: #2980B9; }
+        .badge-skipped { background: #fef9e7; color: #B9770E; }
+        .badge-pending { background: #eaeded; color: #7F8C8D; }
+        .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+        .log-panel { background: #1e1e1e; color: #d4d4d4; font-family: "Cascadia Code", Consolas, monospace; font-size: 13px; padding: 12px; border-radius: 8px; max-height: 400px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; }
+        .dag-svg { width: 100%; min-height: 300px; }
+        .step-node { cursor: pointer; }
+        .step-node rect { stroke-width: 2; rx: 8; }
+        .status-bar { display: flex; gap: 12px; align-items: center; margin: 12px 0; }
+        .progress { flex: 1; height: 8px; background: #e0e0e0; border-radius: 4px; overflow: hidden; }
+        .progress-fill { height: 100%; background: var(--success); transition: width 0.3s; }
+        .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #ccc; border-top-color: #3498DB; border-radius: 50%; animation: spin 0.8s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); font-size: 14px; }
+        th { color: var(--muted); font-weight: 500; }
+        @media (max-width: 768px) { .grid-3 { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body x-data="{ activeTab: 'projects' }">
+    <div class="header">
+        <h1>⚡ 工作流编排器</h1>
+        <div class="nav">
+            <a href="/projects" :class="{ active: activeTab === 'projects' }" @click="activeTab='projects'">项目列表</a>
+            <a href="/history" :class="{ active: activeTab === 'history' }" @click="activeTab='history'">执行历史</a>
+        </div>
+    </div>
+    <div class="container">
+        {{block "content" .}}{{end}}
+    </div>
+</body>
+</html>
