@@ -25,7 +25,38 @@
         <span style="font-size:14px;color:var(--text-secondary);">
             共 <strong x-text="projects.length" style="color:var(--text);">0</strong> 个项目
         </span>
-        <button class="btn btn-ghost btn-sm" @click="load()">刷新</button>
+        <div class="btn-group">
+            <button class="btn btn-primary btn-sm" @click="showCreate = true">+ 新建项目</button>
+            <button class="btn btn-ghost btn-sm" @click="load()">刷新</button>
+        </div>
+    </div>
+
+    <!-- Create Modal -->
+    <div x-show="showCreate" class="card fade-in" style="margin-bottom:24px;">
+        <div class="card-header">
+            <h4>新建项目</h4>
+            <button class="btn btn-ghost btn-xs" @click="showCreate = false">&times;</button>
+        </div>
+        <div class="card-body">
+            <div style="display:flex;gap:12px;flex-wrap:wrap;">
+                <div style="flex:1;min-width:160px;">
+                    <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">项目名称 *</label>
+                    <input x-model="newProject.name" placeholder="my_project" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:14px;">
+                </div>
+                <div style="flex:1;min-width:160px;">
+                    <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">项目 ID</label>
+                    <input x-model="newProject.project_id" placeholder="001" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:14px;">
+                </div>
+                <div style="flex:1;min-width:160px;">
+                    <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px;">工作流名称</label>
+                    <input x-model="newProject.workflow" placeholder="standard" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:14px;">
+                </div>
+                <div style="display:flex;align-items:flex-end;gap:8px;">
+                    <button class="btn btn-primary" @click="createProject()">创建</button>
+                </div>
+            </div>
+            <div x-show="createError" style="margin-top:8px;font-size:12px;color:var(--failed);" x-text="createError"></div>
+        </div>
     </div>
 
     <!-- Project Cards -->
@@ -116,6 +147,9 @@ function projectList() {
         sseConnected: false,
         running: false,
         _logIdx: 0,
+        showCreate: false,
+        createError: '',
+        newProject: { name: '', project_id: '', workflow: 'standard' },
 
         get enabledCount() { return this.projects.filter(p => p.enabled).length; },
         get disabledCount() { return this.projects.filter(p => !p.enabled).length; },
@@ -124,6 +158,24 @@ function projectList() {
         async load() {
             const res = await fetch('/api/projects');
             this.projects = await res.json();
+        },
+
+        async createProject() {
+            this.createError = '';
+            if (!this.newProject.name) { this.createError = '请输入项目名称'; return; }
+            try {
+                const res = await fetch('/api/projects', {
+                    method: 'POST', headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify(this.newProject)
+                });
+                if (res.ok) {
+                    this.showCreate = false;
+                    this.newProject = { name: '', project_id: '', workflow: 'standard' };
+                    await this.load();
+                } else {
+                    this.createError = await res.text();
+                }
+            } catch(e) { this.createError = e.message; }
         },
 
         initSSE() {

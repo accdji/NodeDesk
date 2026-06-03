@@ -1,5 +1,5 @@
 {{define "workflowBody"}}
-<div x-data="workflowDetail('{{.Project}}')" x-init="load()">
+<div x-data="workflowDetail('{{.Project}}', '{{.ConfigPath}}')" x-init="load()">
     <!-- Breadcrumb -->
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:20px;font-size:13px;">
         <a href="/projects" style="color:var(--text-muted);text-decoration:none;">项目列表</a>
@@ -7,63 +7,74 @@
         <span style="font-weight:500;" x-text="projectName"></span>
     </div>
 
-    <!-- Toolbar -->
+    <!-- Header -->
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;">
         <div style="display:flex;align-items:center;gap:16px;">
-            <div style="width:44px;height:44px;border-radius:10px;background:var(--primary-light);display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:700;color:var(--primary);" x-text="projectName.charAt(0).toUpperCase()"></div>
+            <div style="width:48px;height:48px;border-radius:12px;background:var(--primary-light);display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;color:var(--primary);" x-text="projectName.charAt(0).toUpperCase()"></div>
             <div>
-                <div style="font-weight:700;font-size:18px;" x-text="projectName"></div>
-                <div style="font-size:12px;color:var(--text-muted);">工作流详情</div>
+                <div style="font-weight:700;font-size:20px;" x-text="projectName"></div>
+                <div style="font-size:13px;color:var(--text-muted);">
+                    工作流: <span x-text="workflowName" style="color:var(--text-secondary);"></span>
+                    <span style="margin-left:8px;">ID: <span x-text="projectId" style="color:var(--text-secondary);"></span></span>
+                </div>
             </div>
         </div>
         <div class="btn-group">
-            <button class="btn btn-primary" @click="run(false)">
-                <span>&#9654;</span> 执行
-            </button>
+            <button class="btn btn-ghost btn-sm" @click="editMode = !editMode" x-text="editMode ? '取消编辑' : '编辑配置'"></button>
             <button class="btn btn-outline" @click="run(true)">预览计划</button>
+            <button class="btn btn-primary" @click="run(false)" :disabled="running">
+                <span x-show="!running">&#9654;</span>
+                <span class="spinner" x-show="running"></span>
+                <span x-text="running ? '执行中...' : '执行'"></span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Config Editor (edit mode) -->
+    <div class="card" x-show="editMode" style="margin-bottom:24px;">
+        <div class="card-header">
+            <h4>配置编辑器</h4>
+            <div style="display:flex;gap:8px;">
+                <button class="btn btn-primary btn-sm" @click="saveConfig()">保存配置</button>
+                <button class="btn btn-ghost btn-sm" @click="editMode = false">取消</button>
+            </div>
+        </div>
+        <div class="card-body">
+            <textarea x-ref="configEditor" style="width:100%;height:400px;background:#1A1A2E;color:#CDD6F4;border:none;border-radius:8px;padding:16px;font-family:'JetBrains Mono','Fira Code',Consolas,monospace;font-size:13px;line-height:1.6;resize:vertical;" spellcheck="false"></textarea>
+            <div style="font-size:11px;color:var(--text-muted);margin-top:6px;" x-text="'配置路径: ' + configPath"></div>
         </div>
     </div>
 
     <!-- Progress bar -->
-    <div x-show="running || steps.length > 0" style="margin-bottom:20px;display:none;">
-        <div style="display:flex;justify-content:space-between;margin-bottom:6px;font-size:13px;">
+    <div x-show="running || steps.length > 0" style="margin-bottom:24px;display:none;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:8px;font-size:13px;">
             <span style="color:var(--text-secondary);">执行进度</span>
-            <span style="color:var(--text-muted);" x-text="okCount + '/' + steps.length"></span>
+            <span style="color:var(--text-muted);" x-text="okCount + ' / ' + steps.length + ' 完成'"></span>
         </div>
         <div class="progress-bar">
-            <div class="progress-fill" :class="failedCount > 0 ? 'failed' : 'success'" :style="{ width: progressPct + '%' }"></div>
+            <div class="progress-fill" :class="failedCount > 0 ? 'failed' : ''" :style="{ width: progressPct + '%' }"></div>
         </div>
     </div>
 
+    <!-- Main content -->
     <div class="grid-2">
-        <!-- DAG Visualization -->
-        <div class="card" style="grid-row:span 2;" x-show="dagNodes.length > 0">
+        <!-- DAG -->
+        <div class="card" x-show="dagNodes.length > 0" style="grid-row:span 2;">
             <div class="card-header">
                 <h4>DAG 依赖图</h4>
-                <div style="display:flex;gap:12px;font-size:11px;color:var(--text-muted);">
+                <div style="display:flex;gap:14px;font-size:11px;color:var(--text-muted);">
                     <span><span class="badge-dot success" style="display:inline-block;"></span> 成功</span>
                     <span><span class="badge-dot failed" style="display:inline-block;"></span> 失败</span>
                     <span><span class="badge-dot running" style="display:inline-block;"></span> 执行中</span>
                     <span><span class="badge-dot pending" style="display:inline-block;"></span> 等待</span>
                 </div>
             </div>
-            <div class="card-body">
-                <div id="dag-container" class="dag-container" style="min-height:320px;"></div>
-            </div>
+            <div class="card-body"><div id="dag-container" class="dag-container" style="min-height:340px;"></div></div>
         </div>
 
-        <!-- Empty DAG state -->
-        <div class="card" x-show="dagNodes.length === 0 && !loaded" style="grid-row:span 2;">
-            <div class="card-body empty">
-                <div class="empty-icon">&#9679;</div>
-                <p style="font-weight:500;">工作流未配置</p>
-                <p>请在 projects/&lt;名称&gt;/pipeline.json 中配置 workflow 和 steps</p>
-            </div>
-        </div>
-
-        <!-- Step Status -->
+        <!-- Steps (during execution) -->
         <div class="card" x-show="steps.length > 0">
-            <div class="card-header"><h4>步骤列表</h4></div>
+            <div class="card-header"><h4>执行结果</h4></div>
             <div class="card-body" style="padding:0;">
                 <div class="step-list">
                     <template x-for="s in steps" :key="s.step_name">
@@ -72,15 +83,14 @@
                                 <span x-show="s.state === 'success'">&#10003;</span>
                                 <span x-show="s.state === 'failed'">&#10007;</span>
                                 <span x-show="s.state === 'running'">&#9679;</span>
-                                <span x-show="s.state === 'pending' || s.state === ''">&#9679;</span>
+                                <span x-show="s.state === 'pending' || !s.state">&#9679;</span>
                                 <span x-show="s.state === 'skipped'">&#9654;</span>
                             </div>
                             <div class="step-info">
                                 <div class="step-name" x-text="s.step_name"></div>
                                 <div class="step-target">
-                                    target: <span x-text="s.target || 'local'"></span>
-                                    <span x-show="s.duration"> &middot; </span>
-                                    <span x-show="s.duration" x-text="(s.duration || 0).toFixed(1) + 's'"></span>
+                                    <span x-text="s.target || 'local'"></span>
+                                    <span x-show="s.duration"> &middot; <span x-text="(s.duration||0).toFixed(1)+'s'"></span></span>
                                 </div>
                             </div>
                             <span class="badge" :class="statusBadge(s.state)" x-text="statusLabel(s.state)"></span>
@@ -90,22 +100,29 @@
             </div>
         </div>
 
-        <!-- Step preview (before execution) -->
+        <!-- Step definition (before execution) -->
         <div class="card" x-show="steps.length === 0 && dagNodes.length > 0">
-            <div class="card-header"><h4>工作流步骤</h4></div>
+            <div class="card-header">
+                <h4>步骤定义</h4>
+                <span style="font-size:12px;color:var(--text-muted);" x-text="dagNodes.length + ' 个步骤'"></span>
+            </div>
             <div class="card-body" style="padding:0;">
                 <div class="step-list">
                     <template x-for="node in dagNodes" :key="node.id">
                         <div class="step-item">
                             <div class="step-icon pending">&#9679;</div>
                             <div class="step-info">
-                                <div class="step-name" x-text="node.label || node.id"></div>
+                                <div class="step-name">
+                                    <span x-text="node.label || node.id"></span>
+                                    <span style="font-weight:400;font-size:12px;color:var(--text-muted);margin-left:8px;" x-text="node.runtime ? node.runtime : 'python'"></span>
+                                </div>
                                 <div class="step-target">
-                                    <span x-show="node.deps && node.deps.length > 0" x-text="'依赖: ' + (node.deps || []).join(', ')"></span>
-                                    <span x-show="!node.deps || node.deps.length === 0">无依赖（入口步骤）</span>
+                                    脚本: <span x-text="node.script"></span>
+                                    <span style="margin-left:8px;">target: <span x-text="node.target || 'local'"></span></span>
+                                    <span x-show="node.deps && node.deps.length > 0" style="margin-left:8px;">&larr; <span x-text="node.deps.join(', ')"></span></span>
                                 </div>
                             </div>
-                            <span class="badge badge-pending">等待执行</span>
+                            <span class="badge badge-pending">就绪</span>
                         </div>
                     </template>
                 </div>
@@ -113,8 +130,15 @@
         </div>
     </div>
 
+    <!-- Empty state -->
+    <div class="card empty" x-show="!loaded && steps.length === 0 && dagNodes.length === 0">
+        <div class="empty-icon">&#9881;</div>
+        <p style="font-weight:500;">项目未配置工作流</p>
+        <p>点击「编辑配置」添加 workflow 和 steps</p>
+    </div>
+
     <!-- Log Panel -->
-    <div class="card" x-show="logs.length > 0">
+    <div class="card" x-show="logs.length > 0" style="margin-top:20px;">
         <div class="card-header">
             <h4>执行日志</h4>
             <span style="font-size:12px;color:var(--text-muted);" x-text="logs.length + ' 行'"></span>
@@ -124,7 +148,7 @@
                 <template x-for="log in logs" :key="log._idx">
                     <div>
                         <span class="log-time" x-text="log.timestamp"></span>
-                        <span class="log-step" style="margin-left:8px;" x-text="'[' + log.step_name + ']'"></span>
+                        <span class="log-step" style="margin-left:8px;" x-text="'['+log.step_name+']'"></span>
                         <span class="log-msg" style="margin-left:8px;" x-text="log.message"></span>
                     </div>
                 </template>
@@ -132,8 +156,8 @@
         </div>
     </div>
 
-    <!-- Plan preview (dry run) -->
-    <div class="card" x-show="logs.length > 0 && running === false && steps.length === 0">
+    <!-- Dry run plan -->
+    <div class="card" x-show="logs.length > 0 && !running && steps.length === 0" style="margin-top:20px;">
         <div class="card-header"><h4>执行计划</h4></div>
         <div class="card-body">
             <div class="log-panel" style="background:#1E293B;">
@@ -144,9 +168,12 @@
 </div>
 
 <script>
-function workflowDetail(projectName) {
+function workflowDetail(projectName, configPath) {
     return {
         projectName: projectName,
+        configPath: configPath || '',
+        projectId: '',
+        workflowName: '',
         steps: [],
         logs: [],
         dagNodes: [],
@@ -154,44 +181,76 @@ function workflowDetail(projectName) {
         es: null,
         running: false,
         loaded: false,
+        editMode: false,
         progressPct: 0,
         okCount: 0,
         failedCount: 0,
         _logIdx: 0,
 
         async load() {
-            const pluginsRes = await fetch('/api/plugins');
-            const plugins = await pluginsRes.json();
-            this.dagNodes = plugins.map(p => ({
-                id: p.name,
-                label: p.label || p.name,
-                status: 'pending',
-                deps: p.depends_on || []
-            }));
-            plugins.forEach(p => {
-                (p.depends_on || []).forEach(dep => {
-                    if (this.dagEdges.findIndex(e => e.from === dep && e.to === p.name) === -1) {
-                        this.dagEdges.push({ from: dep, to: p.name });
-                    }
-                });
-            });
-            this.loaded = this.dagNodes.length > 0;
-            if (this.dagNodes.length > 0) {
-                this.$nextTick(() => this.drawDAG());
-            }
+            try {
+                const res = await fetch('/api/projects/' + this.projectName);
+                if (!res.ok) { this.loaded = true; return; }
+                const data = await res.json();
+                this.projectId = data.project_id || '';
+                this.workflowName = data.workflow || '';
+                this.steps = [];
+                this.dagNodes = [];
+                this.dagEdges = [];
+                if (data.steps) {
+                    data.steps.forEach(s => {
+                        this.dagNodes.push({
+                            id: s.plugin, label: s.plugin, status: 'pending',
+                            runtime: s.runtime, script: s.script,
+                            target: s.target, deps: s.depends_on || []
+                        });
+                        (s.depends_on || []).forEach(dep => {
+                            if (this.dagEdges.findIndex(e => e.from === dep && e.to === s.plugin) === -1) {
+                                this.dagEdges.push({ from: dep, to: s.plugin });
+                            }
+                        });
+                    });
+                }
+                this.loaded = true;
+                if (this.dagNodes.length > 0) {
+                    this.$nextTick(() => this.drawDAG());
+                }
+            } catch(e) { this.loaded = true; }
         },
 
-        async run(dryRun) {
-            const url = '/api/run/' + this.projectName + (dryRun ? '?dry=1' : '');
+        async loadConfig() {
+            const res = await fetch('/api/config');
+            const data = await res.json();
+            this.configPath = data.path || '';
+            this.$refs.configEditor.value = JSON.stringify(data.config, null, 2);
+        },
+
+        async saveConfig() {
+            try {
+                const cfg = JSON.parse(this.$refs.configEditor.value);
+                const res = await fetch('/api/config', {
+                    method: 'PUT', headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify(cfg)
+                });
+                if (res.ok) {
+                    this.editMode = false;
+                    await this.load();
+                }
+            } catch(e) { alert('JSON 格式错误: ' + e.message); }
+        },
+
+        async run(dry) {
+            if (this.editMode && !dry) {
+                this.editMode = false;
+            }
+            const url = '/api/run/' + this.projectName + (dry ? '?dry=1' : '');
             const res = await fetch(url, { method: 'POST' });
             const data = await res.json();
 
             if (data.plan) {
                 this.logs = [{ _idx: 0, timestamp: '', step_name: 'PLAN', message: JSON.stringify(data.plan, null, 2) }];
-                this.steps = [];
                 return;
             }
-
             if (data.run_id) {
                 this.logs = [];
                 this.steps = [];
@@ -207,7 +266,6 @@ function workflowDetail(projectName) {
         connectSSE(runId) {
             if (this.es) { this.es.close(); }
             this.es = new EventSource('/api/sse/' + runId);
-
             this.es.onmessage = (evt) => {
                 const msg = JSON.parse(evt.data);
                 if (msg.type === 'log') {
@@ -230,7 +288,6 @@ function workflowDetail(projectName) {
                     this.loadHistory(runId);
                 }
             };
-
             this.es.onerror = () => { this.running = false; };
         },
 
@@ -250,12 +307,12 @@ function workflowDetail(projectName) {
             }
         },
 
-        statusLabel(state) {
-            return { pending: '等待', running: '运行中', success: '成功', failed: '失败', skipped: '已跳过' }[state] || state;
+        statusLabel(s) {
+            return { pending:'等待', running:'运行中', success:'成功', failed:'失败', skipped:'已跳过' }[s] || s;
         },
 
-        statusBadge(state) {
-            return 'badge-' + ({ success: 'success', failed: 'failed', running: 'running', skipped: 'skipped', pending: 'pending' }[state] || 'pending');
+        statusBadge(s) {
+            return 'badge-' + ({ success:'success', failed:'failed', running:'running', skipped:'skipped', pending:'pending' }[s] || 'pending');
         },
 
         drawDAG() {
@@ -269,81 +326,65 @@ function workflowDetail(projectName) {
                 .attr('width', width).attr('height', height);
 
             const levels = this.computeLevels();
-            const levelWidth = width / (levels.length + 1);
-            const colorMap = { success: '#10B981', failed: '#EF4444', running: '#3B82F6', skipped: '#F59E0B', pending: '#94A3B8' };
+            const lw = width / (levels.length + 1);
+            const cmap = { success:'#10B981', failed:'#EF4444', running:'#3B82F6', skipped:'#F59E0B', pending:'#64748B' };
 
             const nodes = this.dagNodes.map((n) => {
                 const level = levels.findIndex(l => l.includes(n.id));
-                const itemsInLevel = (levels[level] || []).length || 1;
-                const idxInLevel = (levels[level] || []).indexOf(n.id);
-                return {
-                    ...n,
-                    x: (level + 1) * levelWidth - 70,
-                    y: (idxInLevel + 0.5) * (height / Math.max(itemsInLevel, 1))
-                };
+                const maxIn = (levels[level]||[]).length||1;
+                const idx = (levels[level]||[]).indexOf(n.id);
+                return {...n, x: (level+1)*lw-70, y: (idx+0.5)*(height/Math.max(maxIn,1))};
             });
 
-            // Arrow marker
             svg.append('defs').append('marker')
-                .attr('id', 'arrowhead').attr('viewBox', '0 0 10 10')
-                .attr('refX', 20).attr('refY', 5).attr('markerWidth', 7).attr('markerHeight', 7)
-                .attr('orient', 'auto')
-                .append('path').attr('d', 'M0,0 L10,5 L0,10 Z').attr('fill', '#CBD5E1');
+                .attr('id','ah').attr('viewBox','0 0 10 10')
+                .attr('refX',20).attr('refY',5).attr('markerWidth',7).attr('markerHeight',7)
+                .attr('orient','auto')
+                .append('path').attr('d','M0,0 L10,5 L0,10 Z').attr('fill','#94A3B8');
 
-            // Drop shadow
-            const filter = svg.append('defs').append('filter').attr('id', 'shadow');
-            filter.append('feDropShadow').attr('dx', 0).attr('dy', 2).attr('stdDeviation', 3).attr('flood-opacity', 0.2);
+            const f = svg.append('defs').append('filter').attr('id','sh');
+            f.append('feDropShadow').attr('dx',0).attr('dy',2).attr('stdDeviation',3).attr('flood-opacity',0.2);
 
-            // Edges
-            const nodeMap = {};
-            nodes.forEach(n => { nodeMap[n.id] = n; });
+            const nm = {}; nodes.forEach(n => { nm[n.id] = n; });
 
             svg.selectAll('line').data(this.dagEdges).enter().append('line')
-                .attr('x1', d => (nodeMap[d.from] || {x:0}).x + 70)
-                .attr('y1', d => (nodeMap[d.from] || {y:0}).y)
-                .attr('x2', d => (nodeMap[d.to] || {x:0}).x)
-                .attr('y2', d => (nodeMap[d.to] || {y:0}).y)
-                .attr('stroke', '#CBD5E1').attr('stroke-width', 2)
-                .attr('marker-end', 'url(#arrowhead)');
+                .attr('x1',d=>(nm[d.from]||{x:0}).x+70)
+                .attr('y1',d=>(nm[d.from]||{y:0}).y)
+                .attr('x2',d=>(nm[d.to]||{x:0}).x)
+                .attr('y2',d=>(nm[d.to]||{y:0}).y)
+                .attr('stroke','#94A3B8').attr('stroke-width',2).attr('marker-end','url(#ah)');
 
-            // Nodes
             const g = svg.selectAll('g.node').data(nodes).enter().append('g')
-                .attr('transform', d => `translate(${d.x},${d.y - 22})`);
+                .attr('transform',d=>`translate(${d.x},${d.y-24})`);
 
-            g.append('rect')
-                .attr('width', 140).attr('height', 44)
-                .attr('rx', 10)
-                .attr('fill', d => colorMap[d.status] || '#94A3B8')
-                .attr('filter', 'url(#shadow)');
+            g.append('rect').attr('width',140).attr('height',48)
+                .attr('rx',10).attr('fill',d=>cmap[d.status]||'#64748B')
+                .attr('filter','url(#sh)');
 
-            g.append('text')
-                .attr('x', 70).attr('y', 27)
-                .attr('text-anchor', 'middle').attr('fill', '#fff')
-                .attr('font-size', 13).attr('font-weight', 600)
-                .text(d => d.label);
+            g.append('text').attr('x',70).attr('y',20)
+                .attr('text-anchor','middle').attr('fill','#fff')
+                .attr('font-size',13).attr('font-weight',600).text(d=>d.label);
+
+            g.append('text').attr('x',70).attr('y',38)
+                .attr('text-anchor','middle').attr('fill','rgba(255,255,255,0.75)')
+                .attr('font-size',10).text(d=>(d.script||'')+' · '+(d.target||''));
         },
 
         computeLevels() {
             if (this.dagNodes.length === 0) return [];
-            let levels = [];
-            let placed = new Set();
-            const allIds = this.dagNodes.map(n => n.id);
-
-            while (placed.size < allIds.length) {
-                let current = [];
-                allIds.forEach(id => {
+            let levels = [], placed = new Set();
+            const all = this.dagNodes.map(n=>n.id);
+            while (placed.size < all.length) {
+                let cur = [];
+                all.forEach(id => {
                     if (placed.has(id)) return;
-                    const deps = this.dagEdges.filter(e => e.to === id).map(e => e.from);
-                    if (deps.every(d => placed.has(d))) {
-                        current.push(id);
-                    }
+                    const deps = this.dagEdges.filter(e=>e.to===id).map(e=>e.from);
+                    if (deps.every(d=>placed.has(d))) cur.push(id);
                 });
-                if (current.length === 0) {
-                    allIds.forEach(id => { if (!placed.has(id)) { current.push(id); placed.add(id); } });
-                } else {
-                    current.forEach(id => placed.add(id));
-                }
-                if (current.length > 0) levels.push(current);
+                if (cur.length === 0) {
+                    all.forEach(id=>{if(!placed.has(id)){cur.push(id);placed.add(id);}});
+                } else cur.forEach(id=>placed.add(id));
+                if (cur.length>0) levels.push(cur);
             }
             return levels;
         }

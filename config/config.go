@@ -47,16 +47,42 @@ type PipelineConfig struct {
 	Global    map[string]string       `json:"global"`
 }
 
+var currentPath string
+
 // Load 加载 JSON 配置文件，替换 ${VAR} 占位符
 func Load(path string) (*PipelineConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
+	currentPath = path
 
-	content := string(data)
+	content := interpolateEnv(string(data))
 
-	// 从 .env 文件加载环境变量（如果存在）
+	var cfg PipelineConfig
+	if err := json.Unmarshal([]byte(content), &cfg); err != nil {
+		return nil, err
+	}
+
+	return &cfg, nil
+}
+
+// GetPath 返回当前配置文件路径
+func GetPath() string { return currentPath }
+
+// Save 保存配置到文件
+func Save(cfg *PipelineConfig) error {
+	if currentPath == "" {
+		return os.ErrNotExist
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(currentPath, data, 0644)
+}
+
+func interpolateEnv(content string) string {
 	envPath := os.ExpandEnv("${USERPROFILE}\\.workflow\\.env")
 	if envFile, err := os.ReadFile(envPath); err == nil {
 		for _, line := range strings.Split(string(envFile), "\n") {
@@ -69,11 +95,5 @@ func Load(path string) (*PipelineConfig, error) {
 			content = strings.ReplaceAll(content, "${"+k+"}", v)
 		}
 	}
-
-	var cfg PipelineConfig
-	if err := json.Unmarshal([]byte(content), &cfg); err != nil {
-		return nil, err
-	}
-
-	return &cfg, nil
+	return content
 }

@@ -54,6 +54,10 @@ func (r *PluginRegistry) Register(name, label string, dependsOn []string) *Plugi
 	return p
 }
 
+func (r *PluginRegistry) Clear() {
+	r.plugins = make(map[string]*Plugin)
+}
+
 func (r *PluginRegistry) Get(name string) (*Plugin, bool) {
 	p, ok := r.plugins[name]
 	return p, ok

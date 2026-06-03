@@ -75,10 +75,93 @@ func SetupRoutes(mux *http.ServeMux, tmpl *template.Template) {
 	})
 	mux.HandleFunc("GET /workflow/{project}", func(w http.ResponseWriter, r *http.Request) {
 		proj := r.PathValue("project")
-		tmpl.ExecuteTemplate(w, "layout.html", pageData{"Body": "workflowBody", "Project": proj})
+		tmpl.ExecuteTemplate(w, "layout.html", pageData{
+			"Body": "workflowBody", "Project": proj,
+			"ConfigPath": config.GetPath(),
+		})
 	})
 	mux.HandleFunc("GET /history", func(w http.ResponseWriter, r *http.Request) {
 		tmpl.ExecuteTemplate(w, "layout.html", pageData{"Body": "historyBody"})
+	})
+
+	// API - 项目详情（含工作流步骤完整信息）
+	mux.HandleFunc("GET /api/projects/{name}", func(w http.ResponseWriter, r *http.Request) {
+		cfg := getConfig()
+		if cfg == nil { http.NotFound(w, r); return }
+		name := r.PathValue("name")
+		var proj *config.ProjectDef
+		for i := range cfg.Projects {
+			if cfg.Projects[i].Name == name { proj = &cfg.Projects[i]; break }
+		}
+		if proj == nil { http.NotFound(w, r); return }
+		wf, ok := cfg.Workflows[proj.Workflow]
+		if !ok { http.NotFound(w, r); return }
+		steps := make([]map[string]any, len(wf.Steps))
+		for i, s := range wf.Steps {
+			steps[i] = map[string]any{
+				"plugin": s.Plugin, "runtime": s.Runtime, "script": s.Script,
+				"target": s.Target, "server": s.Server, "config": s.Config,
+				"depends_on": s.DependsOn,
+			}
+		}
+		writeJSON(w, map[string]any{
+			"name": proj.Name, "project_id": proj.ProjectID,
+			"workflow": proj.Workflow, "enabled": proj.Enabled,
+			"workflow_label": wf.Label, "steps": steps,
+		})
+	})
+
+	// API - 创建项目
+	mux.HandleFunc("POST /api/projects", func(w http.ResponseWriter, r *http.Request) {
+		cfg := getConfig()
+		if cfg == nil { http.Error(w, "未加载配置", 400); return }
+		var req struct {
+			Name     string `json:"name"`
+			ID       string `json:"project_id"`
+			Workflow string `json:"workflow"`
+		}
+		if json.NewDecoder(r.Body).Decode(&req) != nil || req.Name == "" {
+			http.Error(w, "缺少 name 字段", 400); return
+		}
+		for _, p := range cfg.Projects {
+			if p.Name == req.Name { http.Error(w, "项目已存在", 409); return }
+		}
+		if req.ID == "" { req.ID = req.Name }
+		if req.Workflow == "" { req.Workflow = "standard" }
+		cfg.Projects = append(cfg.Projects, config.ProjectDef{
+			Name: req.Name, ProjectID: req.ID, Workflow: req.Workflow, Enabled: true,
+		})
+		if err := config.Save(cfg); err != nil {
+			http.Error(w, "保存失败: "+err.Error(), 500); return
+		}
+		SetConfig(cfg)
+		RegisterPlugins(cfg)
+		writeJSON(w, map[string]string{"status": "ok"})
+	})
+
+	// API - 查看/保存配置
+	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, r *http.Request) {
+		cfg := getConfig()
+		if cfg == nil { http.Error(w, "未加载配置", 500); return }
+		writeJSON(w, map[string]any{
+			"path": config.GetPath(),
+			"config": cfg,
+		})
+	})
+
+	mux.HandleFunc("PUT /api/config", func(w http.ResponseWriter, r *http.Request) {
+		var cfg config.PipelineConfig
+		if json.NewDecoder(r.Body).Decode(&cfg) != nil {
+			http.Error(w, "JSON 解析失败", 400); return
+		}
+		if err := config.Save(&cfg); err != nil {
+			http.Error(w, "保存失败: "+err.Error(), 500); return
+		}
+		engine.GlobalRegistry.Clear()
+		SetConfig(&cfg)
+		RegisterPlugins(&cfg)
+		log.Printf("配置已重新加载: %d 个工作流, %d 个项目", len(cfg.Workflows), len(cfg.Projects))
+		writeJSON(w, map[string]string{"status": "ok"})
 	})
 
 	// API - 插件
