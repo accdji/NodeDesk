@@ -19,15 +19,23 @@ func main() {
 	baseDir := filepath.Dir(exe)
 
 	// 如果是 go run 方式启动，用当前目录
-	if _, err := os.Stat(filepath.Join(baseDir, "projects")); os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(baseDir, "config")); os.IsNotExist(err) {
 		baseDir, _ = os.Getwd()
 	}
 
-	// 加载配置
-	configPath := filepath.Join(baseDir, "projects", "deepway", "pipeline.json")
+	// 确保数据目录存在
+	os.MkdirAll(filepath.Join(baseDir, "projects"), 0755)
+	os.MkdirAll(filepath.Join(baseDir, "tasks"), 0755)
+
+	// 加载配置：环境变量 CONFIG > 项目目录 pipeline.json > 示例配置
+	configPath := os.Getenv("CONFIG")
+	if configPath == "" {
+		configPath = filepath.Join(baseDir, "config", "pipeline.example.json")
+	}
 	cfg, err := config.Load(configPath)
 	if err != nil {
-		log.Fatalf("加载配置失败: %v", err)
+		log.Printf("警告: 加载配置失败 (%v)，使用空配置启动", err)
+		cfg = &config.PipelineConfig{}
 	}
 	api.SetConfig(cfg)
 	api.RegisterPlugins(cfg)
