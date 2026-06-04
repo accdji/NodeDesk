@@ -30,3 +30,21 @@ start_kestra.bat
 !config/pipeline.example.json
 !examples/
 !examples/task.py
+
+# Skill 定义文件（本地参考，不上传）
+.agents/
+skills-lock.json
+
+# 前端构建产物
+web/dist/
+web/node_modules/
+
+# 临时文件
+*.html~
+*~
+*.exe~
+pre-commit.sh
+
+# 计划/文档临时文件
+docs/
+wf_rendered.html
