@@ -84,11 +84,9 @@ export function MonitorPage() {
         } else if (data.type === 'step_end') {
           setSteps((prev) => {
             let foundRunning = false;
-            return prev.map((s, i, arr) => {
+            return prev.map((s) => {
               if (s.step_name !== data.step) return s;
-              const isLastRunning = !foundRunning && s.state === 'running'
-                && !arr.slice(i + 1).some((r) => r.step_name === data.step && r.state === 'running');
-              if (isLastRunning) {
+              if (!foundRunning && s.state === 'running') {
                 foundRunning = true;
                 return { ...s, state: data.state, duration: data.duration, error: data.error || '' };
               }
