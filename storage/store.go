@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -126,7 +127,6 @@ func (s *Store) SaveStep(rec StepRecord) error {
 	if !ok {
 		return nil
 	}
-	// 如果已存在该步骤，更新
 	for i, step := range doc.Steps {
 		if step.StepName == rec.StepName {
 			doc.Steps[i] = rec
@@ -137,6 +137,22 @@ func (s *Store) SaveStep(rec StepRecord) error {
 	doc.Steps = append(doc.Steps, rec)
 	s.saveDoc(rec.RunID)
 	return nil
+}
+
+func (s *Store) UpdateStepDuration(runID, stepName string, duration float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	doc, ok := s.runs[runID]
+	if !ok {
+		return
+	}
+	for i, step := range doc.Steps {
+		if step.StepName == stepName {
+			doc.Steps[i].Duration = duration
+			s.saveDoc(runID)
+			return
+		}
+	}
 }
 
 func (s *Store) AppendLog(entry LogEntry) error {
@@ -180,13 +196,9 @@ func (s *Store) GetHistory(filter *HistoryFilter) (*HistoryResult, error) {
 	}
 
 	// 排序：按时间降序
-	for i := 0; i < len(runs); i++ {
-		for j := i + 1; j < len(runs); j++ {
-			if runs[j].CreatedAt.After(runs[i].CreatedAt) {
-				runs[i], runs[j] = runs[j], runs[i]
-			}
-		}
-	}
+	sort.Slice(runs, func(i, j int) bool {
+		return runs[j].CreatedAt.After(runs[i].CreatedAt)
+	})
 
 	// 过滤
 	filtered := make([]RunRecord, 0)

@@ -1,6 +1,9 @@
 package engine
 
-import "time"
+import (
+	"sync"
+	"time"
+)
 
 type StepState string
 
@@ -31,6 +34,7 @@ type ParamDef struct {
 }
 
 type Plugin struct {
+	StepID    string   // unique step ID within a workflow
 	Name      string
 	Label     string
 	DependsOn []string
@@ -51,6 +55,7 @@ type Plugin struct {
 }
 
 type PluginRegistry struct {
+	mu      sync.RWMutex
 	plugins map[string]*Plugin
 }
 
@@ -60,6 +65,8 @@ func (r *PluginRegistry) Register(name, label string, dependsOn []string) *Plugi
 	if dependsOn == nil {
 		dependsOn = []string{}
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if existing, ok := r.plugins[name]; ok {
 		if len(dependsOn) > 0 {
 			existing.DependsOn = dependsOn
@@ -72,15 +79,21 @@ func (r *PluginRegistry) Register(name, label string, dependsOn []string) *Plugi
 }
 
 func (r *PluginRegistry) Clear() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.plugins = make(map[string]*Plugin)
 }
 
 func (r *PluginRegistry) Get(name string) (*Plugin, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	p, ok := r.plugins[name]
 	return p, ok
 }
 
 func (r *PluginRegistry) ListAll() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	names := make([]string, 0, len(r.plugins))
 	for n := range r.plugins {
 		names = append(names, n)
@@ -88,6 +101,10 @@ func (r *PluginRegistry) ListAll() []string {
 	return names
 }
 
-func (r *PluginRegistry) Len() int { return len(r.plugins) }
+func (r *PluginRegistry) Len() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return len(r.plugins)
+}
 
 func (r *PluginRegistry) BuildDeps() {}

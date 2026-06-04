@@ -12,6 +12,7 @@ workflow.exe
 # 环境变量
 .env
 *.env
+.gocache
 
 # IDE
 .vscode/

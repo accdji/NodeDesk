@@ -2,41 +2,39 @@ package api
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"html/template"
 	"log"
 	"net/http"
 	"sync"
+	"strconv"
 	"time"
 
 	"workflow/config"
 	"workflow/engine"
 	"workflow/executor"
+	"workflow/pkg/mapper"
 	"workflow/plugins"
 	"workflow/storage"
 )
 
-// pageData 传递给 layout 模板的页面数据
-type pageData map[string]any
-
-// SSE 客户端连接
 type sseClient struct {
-	ch     chan string
-	runID  string
+	ch    chan string
+	runID string
 }
 
 var (
-	sseClients   = make(map[string][]*sseClient)
-	sseMu        sync.Mutex
+	sseClients  = make(map[string][]*sseClient)
+	sseMu       sync.Mutex
 
-	currentCfg   *config.PipelineConfig
-	cfgMu        sync.RWMutex
+	runCancels  = make(map[string]context.CancelFunc)
+	runCancelMu sync.Mutex
 
-	translations  map[string]string
-	lang          string
+	currentCfg  *config.PipelineConfig
+	cfgMu       sync.RWMutex
+
+	translations map[string]string
+	lang         string
 )
 
 func SetConfig(cfg *config.PipelineConfig) {
@@ -52,24 +50,28 @@ func SetTranslations(l string, tr map[string]string) {
 	translations = tr
 }
 
-func buildPageData(body string, extra map[string]any) pageData {
-	pd := pageData{"Body": body, "Lang": lang, "Tr": translations}
-	for k, v := range extra { pd[k] = v }
-	return pd
-}
-
 func RegisterPlugins(cfg *config.PipelineConfig) {
 	for _, wf := range cfg.Workflows {
+		nameCounter := make(map[string]int)
 		for _, step := range wf.Steps {
-			p := engine.GlobalRegistry.Register(step.Plugin, step.Plugin, step.DependsOn)
+			regName := step.Plugin
+			if count := nameCounter[step.Plugin]; count > 0 {
+				regName = fmt.Sprintf("%s#%d", step.Plugin, count)
+			}
+			nameCounter[step.Plugin]++
+			p := engine.GlobalRegistry.Register(regName, step.Plugin, step.DependsOn)
 			p.Target = step.Target
 			p.Runtime = step.Runtime
 			p.Script = step.Script
 			p.Config = step.Config
 			p.Type = step.Type
 			if p.Type == "" { p.Type = "script" }
-			for _, in := range step.Inputs { p.Inputs = append(p.Inputs, engine.ParamDef{Name: in.Name, Type: in.Type, Desc: in.Desc, Required: in.Required}) }
-			for _, out := range step.Outputs { p.Outputs = append(p.Outputs, engine.ParamDef{Name: out.Name, Type: out.Type, Desc: out.Desc, Required: out.Required}) }
+			for _, in := range step.Inputs {
+				p.Inputs = append(p.Inputs, engine.ParamDef{Name: in.Name, Type: in.Type, Desc: in.Desc, Required: in.Required})
+			}
+			for _, out := range step.Outputs {
+				p.Outputs = append(p.Outputs, engine.ParamDef{Name: out.Name, Type: out.Type, Desc: out.Desc, Required: out.Required})
+			}
 			p.Mode = step.Mode
 			p.EntryFunc = step.EntryFunction
 			p.Condition = step.Condition
@@ -87,29 +89,11 @@ func getConfig() *config.PipelineConfig {
 }
 
 func genID() string {
-	b := make([]byte, 12)
-	rand.Read(b)
-	return hex.EncodeToString(b)
+	return fmt.Sprintf("%x", time.Now().UnixNano())
 }
 
-// SetupRoutes 注册所有路由（使用 Go 1.22 标准库路由）
-func SetupRoutes(mux *http.ServeMux, tmpl *template.Template) {
-	// 页面 — 每个页面通过唯一的 Body 模板名渲染内容区
-	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
-		tmpl.ExecuteTemplate(w, "layout.html", buildPageData("projectsBody", map[string]any{"ConfigPath": config.GetPath()}))
-	})
-	mux.HandleFunc("GET /projects", func(w http.ResponseWriter, r *http.Request) {
-		tmpl.ExecuteTemplate(w, "layout.html", buildPageData("projectsBody", map[string]any{"ConfigPath": config.GetPath()}))
-	})
-	mux.HandleFunc("GET /workflow/{project}", func(w http.ResponseWriter, r *http.Request) {
-		proj := r.PathValue("project")
-		tmpl.ExecuteTemplate(w, "layout.html", buildPageData("workflowBody", map[string]any{"Project": proj, "ConfigPath": config.GetPath()}))
-	})
-	mux.HandleFunc("GET /history", func(w http.ResponseWriter, r *http.Request) {
-		tmpl.ExecuteTemplate(w, "layout.html", buildPageData("historyBody", nil))
-	})
+func SetupRoutes(mux *http.ServeMux) {
 
-	// API - 项目详情（含工作流步骤完整信息）
 	mux.HandleFunc("GET /api/projects/{name}", func(w http.ResponseWriter, r *http.Request) {
 		cfg := getConfig()
 		if cfg == nil { http.NotFound(w, r); return }
@@ -139,20 +123,19 @@ func SetupRoutes(mux *http.ServeMux, tmpl *template.Template) {
 		})
 	})
 
-	// API - 创建项目
 	mux.HandleFunc("POST /api/projects", func(w http.ResponseWriter, r *http.Request) {
 		cfg := getConfig()
-		if cfg == nil { http.Error(w, "未加载配置", 400); return }
+		if cfg == nil { http.Error(w, "not loaded", 400); return }
 		var req struct {
-			Name     string `json:"name"`
-			ID       string `json:"project_id"`
-			Workflow string `json:"workflow"`
+			Name     string
+			ID       string
+			Workflow string
 		}
 		if json.NewDecoder(r.Body).Decode(&req) != nil || req.Name == "" {
-			http.Error(w, "缺少 name 字段", 400); return
+			http.Error(w, "missing name", 400); return
 		}
 		for _, p := range cfg.Projects {
-			if p.Name == req.Name { http.Error(w, "项目已存在", 409); return }
+			if p.Name == req.Name { http.Error(w, "exists", 409); return }
 		}
 		if req.ID == "" { req.ID = req.Name }
 		if req.Workflow == "" { req.Workflow = "standard" }
@@ -160,53 +143,45 @@ func SetupRoutes(mux *http.ServeMux, tmpl *template.Template) {
 			Name: req.Name, ProjectID: req.ID, Workflow: req.Workflow, Enabled: true,
 		})
 		if err := config.Save(cfg); err != nil {
-			http.Error(w, "保存失败: "+err.Error(), 500); return
+			http.Error(w, "save: "+err.Error(), 500); return
 		}
 		SetConfig(cfg)
 		RegisterPlugins(cfg)
 		writeJSON(w, map[string]string{"status": "ok"})
 	})
 
-	// API - 查看/保存配置
 	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, r *http.Request) {
 		cfg := getConfig()
-		if cfg == nil { http.Error(w, "未加载配置", 500); return }
-		writeJSON(w, map[string]any{
-			"path": config.GetPath(),
-			"config": cfg,
-		})
+		if cfg == nil { http.Error(w, "not loaded", 500); return }
+		writeJSON(w, map[string]any{"path": config.GetPath(), "config": cfg})
 	})
 
 	mux.HandleFunc("PUT /api/config", func(w http.ResponseWriter, r *http.Request) {
 		var cfg config.PipelineConfig
 		if json.NewDecoder(r.Body).Decode(&cfg) != nil {
-			http.Error(w, "JSON 解析失败", 400); return
+			http.Error(w, "bad json", 400); return
 		}
 		if err := config.Save(&cfg); err != nil {
-			http.Error(w, "保存失败: "+err.Error(), 500); return
+			http.Error(w, "save: "+err.Error(), 500); return
 		}
 		engine.GlobalRegistry.Clear()
 		SetConfig(&cfg)
 		RegisterPlugins(&cfg)
-		log.Printf("配置已重新加载: %d 个工作流, %d 个项目", len(cfg.Workflows), len(cfg.Projects))
+		log.Printf("config reloaded: %d workflows, %d projects", len(cfg.Workflows), len(cfg.Projects))
 		writeJSON(w, map[string]string{"status": "ok"})
 	})
 
-	// API - 项目更新/删除
 	mux.HandleFunc("PATCH /api/projects/{name}", func(w http.ResponseWriter, r *http.Request) {
 		cfg := getConfig()
 		if cfg == nil { http.NotFound(w, r); return }
 		name := r.PathValue("name")
-		var req struct{ Enabled *bool `json:"enabled"` }
+		var req struct{ Enabled *bool }
 		json.NewDecoder(r.Body).Decode(&req)
 		for i := range cfg.Projects {
 			if cfg.Projects[i].Name == name {
 				if req.Enabled != nil { cfg.Projects[i].Enabled = *req.Enabled }
-				config.Save(cfg)
-				SetConfig(cfg)
-				RegisterPlugins(cfg)
-				writeJSON(w, map[string]string{"status": "ok"})
-				return
+				config.Save(cfg); SetConfig(cfg); RegisterPlugins(cfg)
+				writeJSON(w, map[string]string{"status": "ok"}); return
 			}
 		}
 		http.NotFound(w, r)
@@ -219,28 +194,22 @@ func SetupRoutes(mux *http.ServeMux, tmpl *template.Template) {
 		for i := range cfg.Projects {
 			if cfg.Projects[i].Name == name {
 				cfg.Projects = append(cfg.Projects[:i], cfg.Projects[i+1:]...)
-				config.Save(cfg)
-				SetConfig(cfg)
-				RegisterPlugins(cfg)
-				writeJSON(w, map[string]string{"status": "ok"})
-				return
+				config.Save(cfg); SetConfig(cfg); RegisterPlugins(cfg)
+				writeJSON(w, map[string]string{"status": "ok"}); return
 			}
 		}
 		http.NotFound(w, r)
 	})
 
-	// API - 工作流管理
 	mux.HandleFunc("POST /api/workflows", func(w http.ResponseWriter, r *http.Request) {
 		cfg := getConfig()
-		if cfg == nil { http.Error(w, "未加载配置", 500); return }
-		var req struct{ Name string `json:"name"` }
+		if cfg == nil { http.Error(w, "not loaded", 500); return }
+		var req struct{ Name string }
 		json.NewDecoder(r.Body).Decode(&req)
-		if req.Name == "" { http.Error(w, "缺少 name", 400); return }
-		if _, ok := cfg.Workflows[req.Name]; ok { http.Error(w, "工作流已存在", 409); return }
+		if req.Name == "" { http.Error(w, "missing name", 400); return }
+		if _, ok := cfg.Workflows[req.Name]; ok { http.Error(w, "exists", 409); return }
 		cfg.Workflows[req.Name] = config.WorkflowDef{Label: req.Name, Steps: []config.StepDef{}}
-		config.Save(cfg)
-		SetConfig(cfg)
-		RegisterPlugins(cfg)
+		config.Save(cfg); SetConfig(cfg); RegisterPlugins(cfg)
 		writeJSON(w, map[string]string{"status": "ok"})
 	})
 
@@ -250,20 +219,17 @@ func SetupRoutes(mux *http.ServeMux, tmpl *template.Template) {
 		name := r.PathValue("name")
 		src, ok := cfg.Workflows[name]
 		if !ok { http.NotFound(w, r); return }
-		var req struct{ Name string `json:"name"` }
+		var req struct{ Name string }
 		json.NewDecoder(r.Body).Decode(&req)
 		if req.Name == "" { req.Name = name + "_copy" }
-		if _, ok := cfg.Workflows[req.Name]; ok { http.Error(w, "工作流已存在", 409); return }
+		if _, ok := cfg.Workflows[req.Name]; ok { http.Error(w, "exists", 409); return }
 		steps := make([]config.StepDef, len(src.Steps))
 		copy(steps, src.Steps)
 		cfg.Workflows[req.Name] = config.WorkflowDef{Label: req.Name, Steps: steps}
-		config.Save(cfg)
-		SetConfig(cfg)
-		RegisterPlugins(cfg)
+		config.Save(cfg); SetConfig(cfg); RegisterPlugins(cfg)
 		writeJSON(w, map[string]string{"status": "ok"})
 	})
 
-	// API - 步骤增删改
 	mux.HandleFunc("POST /api/projects/{name}/steps", func(w http.ResponseWriter, r *http.Request) {
 		cfg := getConfig()
 		if cfg == nil { http.NotFound(w, r); return }
@@ -274,62 +240,71 @@ func SetupRoutes(mux *http.ServeMux, tmpl *template.Template) {
 		}
 		if proj == nil { http.NotFound(w, r); return }
 		wf, ok := cfg.Workflows[proj.Workflow]
-		if !ok { http.Error(w, "工作流不存在", 404); return }
+		if !ok { http.Error(w, "wf not found", 404); return }
 		var step config.StepDef
 		if json.NewDecoder(r.Body).Decode(&step) != nil || step.Plugin == "" {
-			http.Error(w, "缺少 plugin 字段", 400); return
+			http.Error(w, "missing plugin", 400); return
 		}
 		if step.Runtime == "" { step.Runtime = "python" }
 		if step.Script == "" { step.Script = step.Plugin + ".py" }
 		wf.Steps = append(wf.Steps, step)
 		cfg.Workflows[proj.Workflow] = wf
-		if err := config.Save(cfg); err != nil { http.Error(w, "保存失败", 500); return }
-		engine.GlobalRegistry.Clear()
-		SetConfig(cfg)
-		RegisterPlugins(cfg)
+		if err := config.Save(cfg); err != nil { http.Error(w, "save fail", 500); return }
+		engine.GlobalRegistry.Clear(); SetConfig(cfg); RegisterPlugins(cfg)
 		writeJSON(w, map[string]string{"status": "ok"})
 	})
 
-	mux.HandleFunc("DELETE /api/projects/{name}/steps/{plugin}", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("DELETE /api/projects/{name}/steps/{stepName}", func(w http.ResponseWriter, r *http.Request) {
 		cfg := getConfig()
 		if cfg == nil { http.NotFound(w, r); return }
-		name, plugin := r.PathValue("name"), r.PathValue("plugin")
+		name := r.PathValue("name")
+		stepName := r.PathValue("stepName")
 		var proj *config.ProjectDef
 		for i := range cfg.Projects {
 			if cfg.Projects[i].Name == name { proj = &cfg.Projects[i]; break }
 		}
 		if proj == nil { http.NotFound(w, r); return }
 		wf, ok := cfg.Workflows[proj.Workflow]
-		if !ok { http.Error(w, "工作流不存在", 404); return }
+		if !ok { http.Error(w, "wf not found", 404); return }
 		idx := -1
-		for i, s := range wf.Steps { if s.Plugin == plugin { idx = i; break } }
-		if idx < 0 { http.NotFound(w, r); return }
+		for i, s := range wf.Steps {
+			if s.Plugin == stepName { idx = i; break }
+		}
+		if idx < 0 {
+			http.NotFound(w, r)
+			return
+		}
 		wf.Steps = append(wf.Steps[:idx], wf.Steps[idx+1:]...)
 		cfg.Workflows[proj.Workflow] = wf
-		if err := config.Save(cfg); err != nil { http.Error(w, "保存失败", 500); return }
-		engine.GlobalRegistry.Clear()
-		SetConfig(cfg)
-		RegisterPlugins(cfg)
+		if err := config.Save(cfg); err != nil { http.Error(w, "save fail", 500); return }
+		engine.GlobalRegistry.Clear(); SetConfig(cfg); RegisterPlugins(cfg)
 		writeJSON(w, map[string]string{"status": "ok"})
 	})
 
-	mux.HandleFunc("PUT /api/projects/{name}/steps/{plugin}", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("PUT /api/projects/{name}/steps/{stepName}", func(w http.ResponseWriter, r *http.Request) {
 		cfg := getConfig()
 		if cfg == nil { http.NotFound(w, r); return }
-		name, plugin := r.PathValue("name"), r.PathValue("plugin")
+		name := r.PathValue("name")
+		stepName := r.PathValue("stepName")
 		var proj *config.ProjectDef
 		for i := range cfg.Projects {
 			if cfg.Projects[i].Name == name { proj = &cfg.Projects[i]; break }
 		}
 		if proj == nil { http.NotFound(w, r); return }
 		wf, ok := cfg.Workflows[proj.Workflow]
-		if !ok { http.Error(w, "工作流不存在", 404); return }
+		if !ok { http.Error(w, "wf not found", 404); return }
 		var updated config.StepDef
-		if json.NewDecoder(r.Body).Decode(&updated) != nil { http.Error(w, "JSON 解析失败", 400); return }
-		found := false
+		if json.NewDecoder(r.Body).Decode(&updated) != nil { http.Error(w, "bad json", 400); return }
+		idx := -1
 		for i, s := range wf.Steps {
-			if s.Plugin == plugin {
-				if updated.Plugin != "" { wf.Steps[i].Plugin = updated.Plugin }
+			if s.Plugin == stepName { idx = i; break }
+		}
+		if idx < 0 {
+			http.NotFound(w, r)
+			return
+		}
+		i := idx
+		if updated.Plugin != "" { wf.Steps[i].Plugin = updated.Plugin }
 				if updated.Target != "" { wf.Steps[i].Target = updated.Target }
 				if updated.Runtime != "" { wf.Steps[i].Runtime = updated.Runtime }
 				if updated.Script != "" { wf.Steps[i].Script = updated.Script }
@@ -345,63 +320,111 @@ func SetupRoutes(mux *http.ServeMux, tmpl *template.Template) {
 				if updated.LoopOver != "" { wf.Steps[i].LoopOver = updated.LoopOver }
 				if updated.TrueBranch != "" { wf.Steps[i].TrueBranch = updated.TrueBranch }
 				if updated.FalseBranch != "" { wf.Steps[i].FalseBranch = updated.FalseBranch }
-				found = true
-				break
-			}
-		}
-		if !found { http.NotFound(w, r); return }
+
 		cfg.Workflows[proj.Workflow] = wf
-		if err := config.Save(cfg); err != nil { http.Error(w, "保存失败", 500); return }
-		engine.GlobalRegistry.Clear()
-		SetConfig(cfg)
-		RegisterPlugins(cfg)
+		if err := config.Save(cfg); err != nil { http.Error(w, "save fail", 500); return }
+		engine.GlobalRegistry.Clear(); SetConfig(cfg); RegisterPlugins(cfg)
 		writeJSON(w, map[string]string{"status": "ok"})
 	})
 
-	// API - 插件
 	mux.HandleFunc("GET /api/plugins", func(w http.ResponseWriter, r *http.Request) {
 		project := r.URL.Query().Get("project")
 		list := plugins.Discover(project)
 		writeJSON(w, list)
 	})
 
-	// API - 工作流列表
 	mux.HandleFunc("GET /api/workflows", func(w http.ResponseWriter, r *http.Request) {
 		cfg := getConfig()
 		if cfg == nil { writeJSON(w, []string{}); return }
-		workflows := make([]map[string]any, 0)
+		wfs := make([]map[string]any, 0)
 		for name, wf := range cfg.Workflows {
 			names := make([]string, len(wf.Steps))
 			for i, s := range wf.Steps { names[i] = s.Plugin }
-			workflows = append(workflows, map[string]any{"name": name, "label": wf.Label, "steps": names})
+			wfs = append(wfs, map[string]any{"name": name, "label": wf.Label, "steps": names})
 		}
-		writeJSON(w, workflows)
+		writeJSON(w, wfs)
 	})
 
-	// API - 项目列表
 	mux.HandleFunc("GET /api/projects", func(w http.ResponseWriter, r *http.Request) {
 		cfg := getConfig()
 		if cfg == nil { writeJSON(w, []string{}); return }
-		projects := make([]map[string]any, 0)
+		store := storage.GetStore()
+		projs := make([]map[string]any, 0)
 		for _, proj := range cfg.Projects {
-			projects = append(projects, map[string]any{
+			p := map[string]any{
 				"name": proj.Name, "project_id": proj.ProjectID,
 				"workflow": proj.Workflow, "enabled": proj.Enabled,
-			})
+			}
+			if store != nil {
+				if latest := store.GetLatestRun(proj.Name); latest != nil {
+					p["last_run"] = map[string]any{
+						"status": latest.Status,
+						"created_at": latest.CreatedAt,
+						"finished_at": latest.FinishedAt,
+					}
+				}
+			}
+			projs = append(projs, p)
 		}
-		writeJSON(w, projects)
+		writeJSON(w, projs)
 	})
 
-	// API - 执行
 	mux.HandleFunc("POST /api/run/{project}", handleRun)
 
-	// API - 历史
 	mux.HandleFunc("GET /api/history", func(w http.ResponseWriter, r *http.Request) {
 		store := storage.GetStore()
-		if store == nil { writeJSON(w, []interface{}{}); return }
-		result, err := store.GetHistory(nil)
+		if store == nil { writeJSON(w, map[string]any{"runs": []any{}, "total": 0, "page": 1, "size": 20}); return }
+		q := r.URL.Query()
+		page, _ := strconv.Atoi(q.Get("page"))
+		if page < 1 { page = 1 }
+		size, _ := strconv.Atoi(q.Get("size"))
+		if size < 1 { size = 20 }
+		filter := &storage.HistoryFilter{
+			Status:  q.Get("status"),
+			Project: q.Get("project"),
+			Search:  q.Get("q"),
+			Page:    page,
+			Size:    size,
+		}
+		result, err := store.GetHistory(filter)
 		if err != nil { http.Error(w, err.Error(), 500); return }
-		writeJSON(w, result.Runs)
+		writeJSON(w, result)
+	})
+
+	mux.HandleFunc("DELETE /api/history/{id}", func(w http.ResponseWriter, r *http.Request) {
+		store := storage.GetStore()
+		if store == nil { http.NotFound(w, r); return }
+		id := r.PathValue("id")
+		if err := store.DeleteRun(id); err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		writeJSON(w, map[string]string{"status": "ok"})
+	})
+
+	mux.HandleFunc("DELETE /api/history/batch", func(w http.ResponseWriter, r *http.Request) {
+		store := storage.GetStore()
+		if store == nil { http.Error(w, "no store", 500); return }
+		var req struct{ IDs []string `json:"ids"` }
+		if json.NewDecoder(r.Body).Decode(&req) != nil {
+			http.Error(w, "bad json", 400); return
+		}
+		if err := store.DeleteRuns(req.IDs); err != nil {
+			http.Error(w, err.Error(), 500); return
+		}
+		writeJSON(w, map[string]string{"status": "ok"})
+	})
+
+	mux.HandleFunc("GET /api/history/{id}/logs/download", func(w http.ResponseWriter, r *http.Request) {
+		store := storage.GetStore()
+		if store == nil { http.NotFound(w, r); return }
+		doc, err := store.GetRunDetail(r.PathValue("id"))
+		if err != nil { http.NotFound(w, r); return }
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Disposition", "attachment; filename=run-"+r.PathValue("id")+".log")
+		for _, log := range doc.Logs {
+			fmt.Fprintf(w, "[%s] [%s] %s\n", log.Timestamp, log.StepName, log.Message)
+		}
 	})
 
 	mux.HandleFunc("GET /api/history/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -412,8 +435,8 @@ func SetupRoutes(mux *http.ServeMux, tmpl *template.Template) {
 		writeJSON(w, doc)
 	})
 
-	// SSE 日志流
 	mux.HandleFunc("GET /api/sse/{id}", handleSSE)
+	mux.HandleFunc("POST /api/cancel/{id}", handleCancel)
 }
 
 func handleRun(w http.ResponseWriter, r *http.Request) {
@@ -422,28 +445,31 @@ func handleRun(w http.ResponseWriter, r *http.Request) {
 	fromStep := r.URL.Query().Get("from")
 
 	cfg := getConfig()
-	if cfg == nil { http.Error(w, "未加载配置", 400); return }
+	if cfg == nil { http.Error(w, "not loaded", 400); return }
 
 	var proj *config.ProjectDef
 	for i := range cfg.Projects {
 		if cfg.Projects[i].Name == projectName { proj = &cfg.Projects[i]; break }
 	}
-	if proj == nil { http.Error(w, "项目不存在: "+projectName, 404); return }
+	if proj == nil { http.Error(w, "not found: "+projectName, 404); return }
 
 	wf, ok := cfg.Workflows[proj.Workflow]
-	if !ok { http.Error(w, "工作流不存在: "+proj.Workflow, 404); return }
+	if !ok { http.Error(w, "wf not found: "+proj.Workflow, 404); return }
 
+	nameCounter := make(map[string]int)
 	steps := make([]*engine.Plugin, len(wf.Steps))
 	for i, s := range wf.Steps {
-		p, ok := engine.GlobalRegistry.Get(s.Plugin)
-		if !ok {
-			p = engine.GlobalRegistry.Register(s.Plugin, s.Plugin, s.DependsOn)
-			p.Target = s.Target
-			p.Runtime = s.Runtime
-			p.Script = s.Script
-			p.Config = s.Config
+		stepID := s.Plugin
+		if count := nameCounter[s.Plugin]; count > 0 {
+			stepID = fmt.Sprintf("%s#%d", s.Plugin, count)
 		}
-		steps[i] = p
+		nameCounter[s.Plugin]++
+		p, ok := engine.GlobalRegistry.Get(stepID)
+		if !ok {
+			p = engine.GlobalRegistry.Register(stepID, s.Plugin, s.DependsOn)
+			p.Target = s.Target; p.Runtime = s.Runtime; p.Script = s.Script; p.Config = s.Config
+		}
+		step := *p; step.StepID = stepID; steps[i] = &step
 	}
 
 	dag := engine.BuildDAG(steps)
@@ -451,10 +477,8 @@ func handleRun(w http.ResponseWriter, r *http.Request) {
 	if err != nil { http.Error(w, err.Error(), 400); return }
 
 	runID := genID()
-
 	if dryRun {
-		plan := formatPlan(order, steps)
-		writeJSON(w, map[string]any{"plan": plan, "run_id": runID, "dry_run": true})
+		writeJSON(w, map[string]any{"plan": formatPlan(order, steps), "run_id": runID, "dry_run": true})
 		return
 	}
 
@@ -466,35 +490,78 @@ func handleRun(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	go executeWorkflow(runID, projectName, proj, wf, steps, order, dag, fromStep)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		timer := time.NewTimer(2 * time.Hour)
+		defer timer.Stop()
+		select {
+		case <-timer.C: cancel()
+		case <-ctx.Done():
+		}
+	}()
+	runCancelMu.Lock()
+	runCancels[runID] = cancel
+	runCancelMu.Unlock()
 
+	go executeWorkflow(ctx, runID, projectName, proj, wf, steps, order, dag, fromStep)
 	writeJSON(w, map[string]string{"run_id": runID, "status": "started"})
 }
 
-func executeWorkflow(runID, projectName string, proj *config.ProjectDef, wf config.WorkflowDef,
+func executeWorkflow(ctx context.Context, runID, projectName string, proj *config.ProjectDef, wf config.WorkflowDef,
 	steps []*engine.Plugin, order []string, dag engine.DAG, fromStep string) {
-
 	defer func() {
-		if r := recover(); r != nil { log.Printf("执行 panic [%s]: %v", runID, r) }
+		if r := recover(); r != nil { log.Printf("panic [%s]: %v", runID, r) }
 	}()
 
 	store := storage.GetStore()
 	runner := engine.NewRunner()
-	runner.LogFunc = func(rid, step, msg string) {
+	runner.StepStartFunc = func(rid, step, target string) {
+		data, _ := json.Marshal(map[string]string{"type": "step_start", "run_id": rid, "step": step, "target": target})
+		broadcastSSEEventRaw(rid, string(data))
+	}
+	runner.StepEndFunc = func(rid, step, state string, duration float64, errMsg string) {
+			if store != nil {
+				store.UpdateStepDuration(rid, step, duration)
+			}
+			data, _ := json.Marshal(map[string]any{
+				"type": "step_end", "run_id": rid, "step": step,
+				"state": state, "duration": duration, "error": errMsg,
+			})
+			broadcastSSEEventRaw(rid, string(data))
+		}
+		runner.LogFunc = func(rid, step, msg string) {
 		ts := time.Now().Format("15:04:05")
 		if store != nil {
-			store.AppendLog(storage.LogEntry{
-				RunID: rid, StepName: step, Timestamp: ts, Level: "INFO", Message: msg,
-			})
+			store.AppendLog(storage.LogEntry{RunID: rid, StepName: step, Timestamp: ts, Level: "INFO", Message: msg})
 		}
 		broadcastSSE(rid, step, ts, msg)
 	}
 
-	err := runner.Run(context.Background(), runID, steps, order, dag, func(p *engine.Plugin) (map[string]any, error) {
+	err := runner.Run(ctx, runID, steps, order, dag, func(p *engine.Plugin) (map[string]any, error) {
+		stepName := p.StepID
+		if stepName == "" { stepName = p.Name }
 		if store != nil {
-			store.SaveStep(storage.StepRecord{
-				RunID: runID, StepName: p.Name, State: string(engine.StateRunning), Target: p.Target,
-			})
+			store.SaveStep(storage.StepRecord{RunID: runID, StepName: stepName, State: string(engine.StateRunning), Target: p.Target})
+		}
+		// mapper 类型：直接执行字段映射，无需脚本
+		if p.Type == "mapper" {
+			inputData := map[string]any{"project": projectName, "project_id": proj.ProjectID}
+			for _, dep := range p.DependsOn {
+				if depRes, ok := runner.GetResults()[dep]; ok && depRes.State == engine.StateSuccess {
+					inputData[dep] = depRes.Data
+				}
+			}
+			if p.Config != nil {
+				for k, v := range p.Config { inputData[k] = v }
+			}
+			var rules []mapper.Rule
+			if rawRules, ok := p.Config["mappings"]; ok {
+				if rulesJSON, err := json.Marshal(rawRules); err == nil {
+					json.Unmarshal(rulesJSON, &rules)
+				}
+			}
+			mapped := mapper.Apply(inputData, rules)
+			return mapped, nil
 		}
 
 		runtime := p.Runtime
@@ -502,38 +569,28 @@ func executeWorkflow(runID, projectName string, proj *config.ProjectDef, wf conf
 		script := p.Script
 		if script == "" { script = p.Name + ".py" }
 		script = executor.ResolveScript(projectName, script)
-
 		params := map[string]any{"project": projectName, "project_id": proj.ProjectID, "work_dir": "."}
 		if p.Config != nil {
 			for k, v := range p.Config { params[k] = v }
 		}
-
 		result, execErr := executor.ExecuteLocal(runtime, script, p.Mode, p.EntryFunc, params,
 			func(line string) {
 				ts := time.Now().Format("15:04:05")
 				if store != nil {
-					store.AppendLog(storage.LogEntry{
-						RunID: runID, StepName: p.Name, Timestamp: ts, Level: "INFO", Message: line,
-					})
+					store.AppendLog(storage.LogEntry{RunID: runID, StepName: stepName, Timestamp: ts, Level: "INFO", Message: line})
 				}
-				broadcastSSE(runID, p.Name, ts, line)
+				broadcastSSE(runID, stepName, ts, line)
 			},
 		)
-
 		if execErr != nil {
 			if store != nil {
-				store.SaveStep(storage.StepRecord{
-					RunID: runID, StepName: p.Name, State: string(engine.StateFailed), Error: execErr.Error(), Target: p.Target,
-				})
+				store.SaveStep(storage.StepRecord{RunID: runID, StepName: stepName, State: string(engine.StateFailed), Error: execErr.Error(), Target: p.Target})
 			}
 			return nil, execErr
 		}
-
 		dataJSON, _ := json.Marshal(result.Data)
 		if store != nil {
-			store.SaveStep(storage.StepRecord{
-				RunID: runID, StepName: p.Name, State: string(engine.StateSuccess), Data: string(dataJSON), Target: p.Target,
-			})
+			store.SaveStep(storage.StepRecord{RunID: runID, StepName: stepName, State: string(engine.StateSuccess), Data: string(dataJSON), Target: p.Target})
 		}
 		return result.Data, nil
 	}, false, fromStep)
@@ -541,28 +598,40 @@ func executeWorkflow(runID, projectName string, proj *config.ProjectDef, wf conf
 	status := "success"
 	if err != nil { status = "failed" }
 	if store != nil { store.UpdateRunStatus(runID, status) }
+	runCancelMu.Lock()
+	delete(runCancels, runID)
+	runCancelMu.Unlock()
+	flushRunLogs(runID)
 	broadcastSSEEvent(runID, "completed", status)
 }
 
-// ========== SSE ==========
+func handleCancel(w http.ResponseWriter, r *http.Request) {
+	runID := r.PathValue("id")
+	runCancelMu.Lock()
+	cancel, ok := runCancels[runID]
+	runCancelMu.Unlock()
+	if !ok { http.NotFound(w, r); return }
+	cancel()
+	store := storage.GetStore()
+	if store != nil { store.UpdateRunStatus(runID, "cancelled") }
+	flushRunLogs(runID)
+	broadcastSSEEvent(runID, "completed", "cancelled")
+	log.Printf("cancelled [%s]", runID)
+	writeJSON(w, map[string]string{"status": "cancelled"})
+}
 
 func handleSSE(w http.ResponseWriter, r *http.Request) {
 	runID := r.PathValue("id")
-
 	flusher, ok := w.(http.Flusher)
-	if !ok { http.Error(w, "不支持流式传输", 500); return }
-
+	if !ok { http.Error(w, "no flush", 500); return }
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-
 	ch := make(chan string, 100)
 	client := &sseClient{ch: ch, runID: runID}
-
 	sseMu.Lock()
 	sseClients[runID] = append(sseClients[runID], client)
 	sseMu.Unlock()
-
 	ctx := r.Context()
 	for {
 		select {
@@ -575,6 +644,11 @@ func handleSSE(w http.ResponseWriter, r *http.Request) {
 					break
 				}
 			}
+			if len(sseClients[runID]) == 0 {
+				runCancelMu.Lock()
+				if cancel, ok := runCancels[runID]; ok { cancel(); delete(runCancels, runID) }
+				runCancelMu.Unlock()
+			}
 			sseMu.Unlock()
 			return
 		case msg := <-ch:
@@ -585,30 +659,40 @@ func handleSSE(w http.ResponseWriter, r *http.Request) {
 }
 
 func broadcastSSE(runID, stepName, timestamp, message string) {
+	// 批量缓冲：累积到 LogBuffer，定时或满 10 条后批量推送
+	if len(message) > 500 {
+		// 长消息直接推送，不进缓冲
+		sendSingleSSE(runID, stepName, timestamp, message)
+		return
+	}
+	lb := getOrCreateLogBuffer(runID, func(lines []logLine) {
+		batchBroadcastSSE(lines)
+	})
+	lb.Add(runID, stepName, timestamp, message)
+}
+
+func sendSingleSSE(runID, stepName, timestamp, message string) {
 	sseMu.Lock()
 	defer sseMu.Unlock()
-
-	msg := map[string]string{
-		"type": "log", "run_id": runID, "step_name": stepName,
-		"timestamp": timestamp, "message": message,
-	}
+	msg := map[string]string{"type": "log", "run_id": runID, "step_name": stepName, "timestamp": timestamp, "message": message}
 	data, _ := json.Marshal(msg)
-
 	for _, c := range sseClients[runID] {
 		select {
 		case c.ch <- string(data):
 		default:
 		}
 	}
+}
+
+func flushRunLogs(runID string) {
+	removeLogBuffer(runID)
 }
 
 func broadcastSSEEvent(runID, eventType, status string) {
 	sseMu.Lock()
 	defer sseMu.Unlock()
-
 	msg := map[string]string{"type": eventType, "run_id": runID, "status": status}
 	data, _ := json.Marshal(msg)
-
 	for _, c := range sseClients[runID] {
 		select {
 		case c.ch <- string(data):
@@ -617,7 +701,16 @@ func broadcastSSEEvent(runID, eventType, status string) {
 	}
 }
 
-// ========== 辅助 ==========
+func broadcastSSEEventRaw(runID, rawJSON string) {
+	sseMu.Lock()
+	defer sseMu.Unlock()
+	for _, c := range sseClients[runID] {
+		select {
+		case c.ch <- rawJSON:
+		default:
+		}
+	}
+}
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -626,7 +719,11 @@ func writeJSON(w http.ResponseWriter, v any) {
 
 func formatPlan(order []string, steps []*engine.Plugin) []map[string]any {
 	pmap := make(map[string]*engine.Plugin)
-	for _, p := range steps { pmap[p.Name] = p }
+	for _, p := range steps {
+		key := p.StepID
+		if key == "" { key = p.Name }
+		pmap[key] = p
+	}
 	result := make([]map[string]any, 0)
 	for i, name := range order {
 		p := pmap[name]

@@ -1,4 +1,4 @@
-package executor
+﻿package executor
 
 import (
 	"bufio"
@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 type Result struct {
@@ -18,7 +19,7 @@ type Result struct {
 
 type LogCallback func(line string)
 
-// ResolveScript 解析脚本路径：项目专属插件目录 > 共享插件目录
+// ResolveScript 瑙ｆ瀽鑴氭湰璺緞锛氶」鐩笓灞炴彃浠剁洰褰?> 鍏变韩鎻掍欢鐩綍
 func ResolveScript(project, script string) string {
 	if filepath.IsAbs(script) {
 		return script
@@ -49,11 +50,11 @@ func findInPluginDir(parentDir, script string) string {
 			if !e.IsDir() {
 				continue
 			}
-			// 匹配插件目录名（去掉扩展名后对比，如 step_a.py → step_a）
-			if e.Name() != nameNoExt && e.Name() != script {
+			// 鍖归厤鎻掍欢鐩綍鍚嶏紙鍘绘帀鎵╁睍鍚嶅悗瀵规瘮锛屽 step_a.py 鈫?step_a锛?
+						if e.Name() != nameNoExt && e.Name() != script {
 				continue
 			}
-			// 优先从 plugin.json 读取入口
+			// 浼樺厛浠?plugin.json 璇诲彇鍏ュ彛
 			mPath := filepath.Join(parentDir, e.Name(), "plugin.json")
 			if data, err := os.ReadFile(mPath); err == nil {
 				var m struct {
@@ -65,7 +66,7 @@ func findInPluginDir(parentDir, script string) string {
 					}
 				}
 			}
-			// fallback: 常见入口文件
+			// fallback: 甯歌鍏ュ彛鏂囦欢
 			for _, entryName := range []string{"main.py", "main.sh", "main.js"} {
 				if found := filepath.Join(parentDir, e.Name(), entryName); fileExists(found) {
 					return found
@@ -89,7 +90,7 @@ func PluginDir(script string) string {
 	return ""
 }
 
-// ExecuteLocal 根据 mode 选择执行方式
+// ExecuteLocal 鏍规嵁 mode 閫夋嫨鎵ц鏂瑰紡
 func ExecuteLocal(runtime, script, mode, entryFunc string, params map[string]any, onLog LogCallback) (*Result, error) {
 	if mode == "" {
 		mode = "cli"
@@ -105,7 +106,7 @@ func ExecuteLocal(runtime, script, mode, entryFunc string, params map[string]any
 	}
 }
 
-// execFunction 函数模式：通过临时文件传参，import 模块调用函数获取返回值
+// execFunction 鍑芥暟妯″紡锛氶€氳繃涓存椂鏂囦欢浼犲弬锛宨mport 妯″潡璋冪敤鍑芥暟鑾峰彇杩斿洖
 func execFunction(runtime, script, pluginDir, entryFunc string, params map[string]any, onLog LogCallback) (*Result, error) {
 	if entryFunc == "" {
 		entryFunc = "run"
@@ -113,14 +114,14 @@ func execFunction(runtime, script, pluginDir, entryFunc string, params map[strin
 
 	tmpDir, err := os.MkdirTemp("", "wf_func_*")
 	if err != nil {
-		return nil, fmt.Errorf("创建临时目录失败: %w", err)
+		return nil, fmt.Errorf("鍒涘缓涓存椂鐩綍澶辫触: %w", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
 	paramsFile := filepath.Join(tmpDir, "params.json")
 	resultFile := filepath.Join(tmpDir, "result.json")
 
-	// 写入参数文件
+	// 鍐欏叆鍙傛暟鏂囦欢
 	writeJSON(paramsFile, params)
 
 	bridgeCode := fmt.Sprintf(`import json, os, sys, importlib.util
@@ -146,11 +147,11 @@ with open(%[5]q, 'w', encoding='utf-8') as f:
 	return runAndCapture(runtime, bridgeFile, cmd, tmpDir, resultFile, onLog)
 }
 
-// execCLI 命令行模式：inputs 转为 --name=value 参数，stdout=日志
+// execCLI 鍛戒护琛屾ā寮忥細inputs 杞负 --name=value 鍙傛暟锛宻tdout=鏃ュ織
 func execCLI(runtime, script, pluginDir string, params map[string]any, onLog LogCallback) (*Result, error) {
 	tmpDir, err := os.MkdirTemp("", "wf_cli_*")
 	if err != nil {
-		return nil, fmt.Errorf("创建临时目录失败: %w", err)
+		return nil, fmt.Errorf("鍒涘缓涓存椂鐩綍澶辫触: %w", err)
 	}
 	defer os.RemoveAll(tmpDir)
 
@@ -158,8 +159,8 @@ func execCLI(runtime, script, pluginDir string, params map[string]any, onLog Log
 
 	args := []string{script}
 	for k, v := range params {
-		// 跳过引擎自动注入的系统参数（避免传给用户脚本）
-		if k == "project" || k == "project_id" || k == "work_dir" {
+		// 璺宠繃寮曟搸鑷姩娉ㄥ叆鐨勭郴缁熷弬鏁帮紙閬垮厤浼犵粰鐢ㄦ埛鑴氭湰锛?
+				if k == "project" || k == "project_id" || k == "work_dir" {
 			continue
 		}
 		args = append(args, fmt.Sprintf("--%s=%v", k, v))
@@ -188,25 +189,35 @@ func runAndCapture(runtime, target string, cmd *exec.Cmd, workDir, resultFile st
 	}
 
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("启动失败 [%s %s]: %w", runtime, target, err)
+		return nil, fmt.Errorf("鍚姩澶辫触 [%s %s]: %w", runtime, target, err)
 	}
 
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if onLog != nil {
-			onLog(line)
-		}
-	}
+	// 并发读取 stdout 和 stderr，防止管道满导致子进程死锁
+	var wg sync.WaitGroup
+	wg.Add(2)
 
-	errScanner := bufio.NewScanner(stderr)
-	for errScanner.Scan() {
-		line := "[stderr] " + errScanner.Text()
-		if onLog != nil {
-			onLog(line)
+	go func() {
+		defer wg.Done()
+		scanner := bufio.NewScanner(stdout)
+		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+		for scanner.Scan() {
+			if onLog != nil {
+				onLog(scanner.Text())
+			}
 		}
-	}
+	}()
+
+	go func() {
+		defer wg.Done()
+		scanner := bufio.NewScanner(stderr)
+		for scanner.Scan() {
+			if onLog != nil {
+				onLog("[stderr] " + scanner.Text())
+			}
+		}
+	}()
+
+	wg.Wait()
 
 	if err := cmd.Wait(); err != nil {
 		return &Result{Status: "failed", Error: err.Error()}, nil
@@ -218,12 +229,12 @@ func runAndCapture(runtime, target string, cmd *exec.Cmd, workDir, resultFile st
 func readResult(path string) (*Result, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		// 没有结果文件也视为成功（CLI 模式可选）
+		// 娌℃湁缁撴灉鏂囦欢涔熻涓烘垚鍔燂紙CLI 妯″紡鍙€夛級
 		return &Result{Status: "success", Data: map[string]any{}}, nil
 	}
 	var r Result
 	if jsonErr := json.Unmarshal(data, &r); jsonErr != nil {
-		return nil, fmt.Errorf("解析结果 JSON 失败: %w\n内容: %s", jsonErr, string(data))
+		return nil, fmt.Errorf("瑙ｆ瀽缁撴灉 JSON 澶辫触: %w\n鍐呭: %s", jsonErr, string(data))
 	}
 	return &r, nil
 }
@@ -236,3 +247,4 @@ func writeJSON(path string, v any) {
 func writeFile(path, content string) {
 	os.WriteFile(path, []byte(content), 0644)
 }
+

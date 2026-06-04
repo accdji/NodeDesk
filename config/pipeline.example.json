@@ -13,23 +13,139 @@
     }
   },
   "workflows": {
+    "customer_format": {
+      "label": "客户格式转换",
+      "steps": [
+        {
+          "plugin": "excel_loader",
+          "type": "script",
+          "target": "local",
+          "runtime": "python",
+          "script": "excel_loader.py",
+          "server": "",
+          "mode": "",
+          "entry_function": "",
+          "config": {
+            "file": "/data/export.xlsx"
+          }
+        },
+        {
+          "plugin": "field_mapper",
+          "type": "mapper",
+          "target": "local",
+          "runtime": "",
+          "script": "",
+          "server": "",
+          "mode": "",
+          "entry_function": "",
+          "config": {
+            "mappings": [
+              {
+                "source": "原始列名",
+                "target": "客户列名"
+              },
+              {
+                "source": "金额",
+                "target": "金额_分",
+                "transform": "multiply_100"
+              }
+            ]
+          },
+          "depends_on": [
+            "excel_loader"
+          ]
+        },
+        {
+          "plugin": "csv_writer",
+          "type": "script",
+          "target": "local",
+          "runtime": "python",
+          "script": "csv_writer.py",
+          "server": "",
+          "mode": "",
+          "entry_function": "",
+          "config": {
+            "output_file": "/data/customer_format.csv"
+          },
+          "depends_on": [
+            "field_mapper"
+          ]
+        }
+      ]
+    },
+    "internal_to_standard": {
+      "label": "数据标准化流程",
+      "steps": [
+        {
+          "plugin": "load_csv",
+          "type": "script",
+          "target": "local",
+          "runtime": "python",
+          "script": "load_csv.py",
+          "server": "",
+          "mode": "",
+          "entry_function": "",
+          "config": {
+            "input_file": "/data/source.csv"
+          }
+        },
+        {
+          "plugin": "standardize",
+          "type": "script",
+          "target": "local",
+          "runtime": "python",
+          "script": "standardize.py",
+          "server": "",
+          "mode": "",
+          "entry_function": "",
+          "config": {
+            "output_file": "/data/standardized.json"
+          },
+          "depends_on": [
+            "load_csv"
+          ]
+        },
+        {
+          "plugin": "write_parquet",
+          "type": "script",
+          "target": "local",
+          "runtime": "python",
+          "script": "write_parquet.py",
+          "server": "",
+          "mode": "",
+          "entry_function": "",
+          "config": {
+            "output_path": "/data/output/"
+          },
+          "depends_on": [
+            "standardize"
+          ]
+        }
+      ]
+    },
     "standard": {
       "label": "闁哄秴娲ら崳锟芥繛缈犺兌閳伙拷",
       "steps": [
         {
           "plugin": "step_a",
+          "type": "script",
           "target": "local",
           "runtime": "python",
           "script": "step_a.py",
           "server": "",
+          "mode": "",
+          "entry_function": "",
           "config": null
         },
         {
           "plugin": "step_b",
+          "type": "",
           "target": "local",
           "runtime": "python",
           "script": "step_b.py",
           "server": "",
+          "mode": "",
+          "entry_function": "",
           "config": null,
           "depends_on": [
             "step_a"
@@ -37,13 +153,44 @@
         },
         {
           "plugin": "step_c",
+          "type": "",
           "target": "ssh",
           "runtime": "python",
           "script": "step_c.py",
           "server": "",
+          "mode": "",
+          "entry_function": "",
           "config": null,
           "depends_on": [
             "step_b"
+          ]
+        },
+        {
+          "plugin": "step_a",
+          "type": "script",
+          "target": "local",
+          "runtime": "python",
+          "script": "plugins/shared/step_a/main.py",
+          "server": "",
+          "mode": "function",
+          "entry_function": "run",
+          "config": null,
+          "depends_on": [
+            "step_b"
+          ],
+          "outputs": [
+            {
+              "name": "status",
+              "type": "string",
+              "desc": "执行状态",
+              "required": false
+            },
+            {
+              "name": "data",
+              "type": "object",
+              "desc": "检查结果数据",
+              "required": false
+            }
           ]
         }
       ]
@@ -65,9 +212,26 @@
       "zip_source_dir": "",
       "server": "",
       "enabled": true
+    },
+    {
+      "name": "数据标准化项目",
+      "project_id": "002",
+      "workflow": "internal_to_standard",
+      "zip_source_dir": "",
+      "server": "",
+      "enabled": true
+    },
+    {
+      "name": "客户A格式转换",
+      "project_id": "003",
+      "workflow": "customer_format",
+      "zip_source_dir": "",
+      "server": "",
+      "enabled": true
     }
   ],
   "global": {
     "work_dir": "."
-  }
+  },
+  "lang": ""
 }
