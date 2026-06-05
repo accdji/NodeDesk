@@ -1,3 +1,4 @@
+import { useState, useMemo } from 'react';
 import type { DagNode, ParamDef } from '../../types';
 import { useWorkflowStore } from '../../stores/workflowStore';
 import { useTranslation } from 'react-i18next';
@@ -20,7 +21,48 @@ export function StepEditor() {
   const deleteStep = useWorkflowStore((s) => s.deleteStep);
   const selectNode = useWorkflowStore((s) => s.selectNode);
 
+  const [refPickerFor, setRefPickerFor] = useState<number | null>(null);
+
   const node = nodes.find((n) => n.id === selectedNodeId);
+
+  // Compute upstream nodes recursively and their available output references
+  const upstreamRefs = useMemo(() => {
+    if (!node) return [] as { nodeId: string; label: string; ref: string }[];
+    const visited = new Set<string>();
+    const queue = [...(node.deps || [])];
+    const refs: { nodeId: string; label: string; ref: string }[] = [];
+    while (queue.length > 0) {
+      const depId = queue.shift()!;
+      if (visited.has(depId)) continue;
+      visited.add(depId);
+      const depNode = nodes.find((n) => n.id === depId);
+      if (!depNode) continue;
+      (depNode.deps || []).forEach((d) => { if (!visited.has(d)) queue.push(d); });
+      refs.push({ nodeId: depNode.id, label: `${depNode.id} (完整输出)`, ref: `$.${depNode.id}` });
+      if (depNode.outputs && depNode.outputs.length > 0) {
+        depNode.outputs.forEach((o) => {
+          if (o.name) refs.push({
+            nodeId: depNode.id,
+            label: `${depNode.id}.${o.name}`,
+            ref: `$.${depNode.id}.${o.name}`,
+          });
+        });
+      }
+      if (depNode.inputs && depNode.inputs.length > 0) {
+        depNode.inputs.forEach((inp) => {
+          if (inp.name) {
+            const already = refs.some((r) => r.ref === `$.${depNode.id}.${inp.name}`);
+            if (!already) refs.push({
+              nodeId: depNode.id,
+              label: `${depNode.id}.${inp.name} (输入)`,
+              ref: `$.${depNode.id}.${inp.name}`,
+            });
+          }
+        });
+      }
+    }
+    return refs;
+  }, [node, nodes]);
 
   if (!node) {
     return (
@@ -48,6 +90,16 @@ export function StepEditor() {
     const inputs = [...(node.inputs || [])];
     inputs[index] = { ...inputs[index], [field]: value };
     update('inputs', inputs);
+  };
+
+  const handleConfigChange = (key: string, value: unknown) => {
+    const config = { ...(node.config || {}) };
+    if (value === '' || value === null || value === undefined) {
+      delete config[key];
+    } else {
+      config[key] = value;
+    }
+    update('config', config);
   };
 
   const handleOutputChange = (index: number, field: string, value: string | boolean) => {
@@ -108,13 +160,18 @@ export function StepEditor() {
             onChange={(e) => update('script', e.target.value)} />
         </div>
 
-        {/* Target */}
+        {/* Target / Server */}
         <div className="form-group">
           <label>{t('wf.target')}</label>
-          <select className="form-input" value={node.target || 'local'}
-            onChange={(e) => update('target', e.target.value)}>
-            <option value="local">Local</option>
-          </select>
+          <input className="form-input" value={node.target || 'local'}
+            onChange={(e) => update('target', e.target.value)}
+            placeholder="local 或服务器名" list="server-list" />
+          <datalist id="server-list">
+            <option value="local" />
+          </datalist>
+          <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+            填 "local" 本地执行，填服务器名则通过 SSH 远程执行
+          </span>
         </div>
 
         {/* Mode */}
@@ -199,23 +256,74 @@ export function StepEditor() {
             {t('step.inputs')}
             <button className="btn btn-ghost btn-xs" onClick={() => addParam('inputs')}>+</button>
           </label>
-          {(node.inputs || []).map((p, i) => (
-            <div key={i} style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
-              <input className="form-input" style={{ flex: 1, fontSize: 11, padding: '4px 6px' }}
-                value={p.name} placeholder={t('step.paramName')}
-                onChange={(e) => handleInputChange(i, 'name', e.target.value)} />
-              <select className="form-input" style={{ width: 70, fontSize: 11, padding: '4px 4px' }}
-                value={p.type} onChange={(e) => handleInputChange(i, 'type', e.target.value)}>
-                <option value="string">string</option>
-                <option value="number">number</option>
-                <option value="boolean">boolean</option>
-                <option value="object">object</option>
-                <option value="array">array</option>
-              </select>
-              <button className="btn btn-ghost btn-xs" onClick={() => removeParam('inputs', i)}
-                style={{ color: 'var(--failed)', padding: '2px 4px' }}>✕</button>
+          {(node.inputs || []).map((p, i) => {
+            return (
+            <div key={i} style={{ marginBottom: 6 }}>
+              <div style={{ display: 'flex', gap: 4, marginBottom: 2 }}>
+                <input className="form-input" style={{ flex: 1, fontSize: 11, padding: '4px 6px' }}
+                  value={p.name} placeholder={t('step.paramName')}
+                  onChange={(e) => handleInputChange(i, 'name', e.target.value)} />
+                <select className="form-input" style={{ width: 70, fontSize: 11, padding: '4px 4px' }}
+                  value={p.type} onChange={(e) => handleInputChange(i, 'type', e.target.value)}>
+                  <option value="string">string</option>
+                  <option value="number">number</option>
+                  <option value="boolean">boolean</option>
+                  <option value="object">object</option>
+                  <option value="array">array</option>
+                </select>
+                <button className="btn btn-ghost btn-xs" onClick={() => removeParam('inputs', i)}
+                  style={{ color: 'var(--failed)', padding: '2px 4px', flexShrink: 0 }}>✕</button>
+              </div>
+              {p.name &&
+                <div style={{ display: 'flex', gap: 2 }}>
+                  <input className="form-input" style={{ flex: 1, fontSize: 11, padding: '4px 6px' }}
+                    value={(node.config?.[p.name] as string) ?? ''}
+                    onChange={(e) => handleConfigChange(p.name, e.target.value)}
+                    placeholder={`${p.name} 的值${p.required ? ' (必填)' : ''}`} />
+                  <button className="btn btn-ghost btn-xs"
+                    style={{ padding: '2px 6px', fontSize: 12, fontWeight: 700, color: 'var(--primary)', flexShrink: 0 }}
+                    onClick={() => setRefPickerFor(refPickerFor === i ? null : i)}
+                    title="引用上游节点输出">
+                    $
+                  </button>
+                </div>
+              }
+              {refPickerFor === i &&
+                <div style={{
+                  background: '#fff', border: '1px solid var(--border)', borderRadius: 8,
+                  boxShadow: '0 4px 16px rgba(0,0,0,0.1)', marginTop: 4, maxHeight: 180, overflowY: 'auto',
+                }}>
+                  {upstreamRefs.length > 0 ? upstreamRefs.map((r) =>
+                    <div key={r.ref}
+                      onClick={() => {
+                        handleConfigChange(p.name, r.ref);
+                        setRefPickerFor(null);
+                      }}
+                      style={{
+                        padding: '5px 10px', cursor: 'pointer', fontSize: 11.5,
+                        fontFamily: 'monospace', borderBottom: '1px solid var(--border)',
+                        display: 'flex', alignItems: 'center', gap: 8,
+                        transition: 'background 0.1s',
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = '#F1F5F9'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                    >
+                      <span style={{ color: 'var(--primary)', fontWeight: 600, fontSize: 10 }}>
+                        {r.nodeId}
+                      </span>
+                      <span style={{ color: 'var(--text-muted)' }}>→</span>
+                      <span>{r.label}</span>
+                    </div>
+                  ) :
+                    <div style={{ padding: 10, fontSize: 11, color: 'var(--text-muted)', textAlign: 'center' }}>
+                      {node.deps?.length ? '上游节点未定义输出参数' : '当前节点无上游依赖'}
+                    </div>
+                  }
+                </div>
+              }
             </div>
-          ))}
+            );
+          })}
         </div>
 
         {/* Outputs */}

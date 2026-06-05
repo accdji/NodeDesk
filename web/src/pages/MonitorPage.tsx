@@ -77,22 +77,20 @@ export function MonitorPage() {
 
       for (const data of items) {
         if (data.type === 'step_start') {
-          setSteps((prev) => [...prev, {
-            run_id: data.run_id, step_name: data.step,
-            state: 'running', data: '', error: '', duration: 0, target: data.target || '',
-          }]);
-        } else if (data.type === 'step_end') {
           setSteps((prev) => {
-            let foundRunning = false;
-            return prev.map((s) => {
-              if (s.step_name !== data.step) return s;
-              if (!foundRunning && s.state === 'running') {
-                foundRunning = true;
-                return { ...s, state: data.state, duration: data.duration, error: data.error || '' };
-              }
-              return s;
-            });
+            if (prev.some((s) => s.step_name === data.step)) return prev;
+            return [...prev, {
+              run_id: data.run_id, step_name: data.step,
+              state: 'running', data: '', error: '', duration: 0, target: data.target || '',
+            }];
           });
+        } else if (data.type === 'step_end') {
+          setSteps((prev) =>
+            prev.map((s) => {
+              if (s.step_name !== data.step || s.state !== 'running') return s;
+              return { ...s, state: data.state, duration: data.duration, error: data.error || '' };
+            })
+          );
         } else if (data.type === 'log') {
           setLogs((prev) => {
             const entry: LogEntry = {

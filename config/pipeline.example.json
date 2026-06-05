@@ -135,7 +135,17 @@
           "server": "",
           "mode": "",
           "entry_function": "",
-          "config": null
+          "config": {
+            "dsa": "as"
+          },
+          "inputs": [
+            {
+              "name": "dsa",
+              "type": "string",
+              "desc": "",
+              "required": false
+            }
+          ]
         },
         {
           "plugin": "step_b",

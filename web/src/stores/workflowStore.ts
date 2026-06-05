@@ -71,15 +71,16 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     set({ loading: true, projectName });
     try {
       const detail = await api.getProject(projectName);
-      const nodes: DagNode[] = detail.steps.map((s: StepDef, i: number) => ({
-        ...s,
-        id: s.plugin + (detail.steps.filter((x: StepDef, j: number) => x.plugin === s.plugin && j < i).length > 0
-          ? `#${detail.steps.filter((x: StepDef, j: number) => x.plugin === s.plugin && j < i).length + 1}`
-          : detail.steps.filter((x: StepDef) => x.plugin === s.plugin).length > 1 ? `#1` : ''),
-        label: s.plugin,
-        status: 'pending' as const,
-        deps: s.depends_on || [],
-      }));
+      const nodes: DagNode[] = detail.steps.map((s: StepDef, i: number) => {
+        const sameCount = detail.steps.filter((x: StepDef, j: number) => x.plugin === s.plugin && j < i).length;
+        return {
+          ...s,
+          id: sameCount > 0 ? `${s.plugin}#${sameCount}` : s.plugin,
+          label: s.plugin,
+          status: 'pending' as const,
+          deps: s.depends_on || [],
+        };
+      });
 
       const edges: DagEdge[] = [];
       nodes.forEach((n) => {
@@ -186,6 +187,7 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
         plugin: node.plugin,
         type: node.type,
         target: node.target,
+        server: node.server,
         runtime: node.runtime,
         script: node.script,
         mode: node.mode,

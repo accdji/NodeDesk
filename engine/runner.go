@@ -216,7 +216,7 @@ func (r *Runner) Run(ctx context.Context, runID string, steps []*Plugin, order [
 		}
 		// 循环节点：标记循环元数据
 		if p.Type == "loop" && result.State == StateSuccess && p.LoopOver != "" {
-			if loopData, lErr := resolveRef(p.LoopOver, r.results); lErr == nil {
+			if loopData, lErr := ResolveRef(p.LoopOver, r.results); lErr == nil {
 				result.Data["loop_data"] = loopData
 				r.emitLog(runID, name, fmt.Sprintf("循环数据: %v", loopData))
 			} else {
@@ -266,11 +266,11 @@ func evaluateCondition(expr string, results map[string]*StepResult) (bool, error
 	left := strings.TrimSpace(parts[0])
 	right := strings.TrimSpace(parts[1])
 
-	lv, err := resolveRef(left, results)
+	lv, err := ResolveRef(left, results)
 	if err != nil {
 		return false, fmt.Errorf("解析左侧值失败 [%s]: %v", left, err)
 	}
-	rv, err := resolveRef(right, results)
+	rv, err := ResolveRef(right, results)
 	if err != nil {
 		return false, fmt.Errorf("解析右侧值失败 [%s]: %v", right, err)
 	}
@@ -279,7 +279,7 @@ func evaluateCondition(expr string, results map[string]*StepResult) (bool, error
 	return compare(lv, rv, op)
 }
 
-func resolveRef(ref string, results map[string]*StepResult) (any, error) {
+func ResolveRef(ref string, results map[string]*StepResult) (any, error) {
 	ref = strings.TrimSpace(ref)
 	if !strings.HasPrefix(ref, "$.") {
 		if ref == "true" {

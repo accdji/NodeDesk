@@ -20,6 +20,7 @@ export interface StepAddReq {
   plugin: string;
   type?: string;
   target?: string;
+  server?: string;
   runtime?: string;
   script?: string;
   mode?: string;

@@ -70,6 +70,37 @@ export function WorkflowPage() {
       });
     }, 1000);
 
+    // Sync initial state — catch up on steps that finished before SSE connected
+    let initialSyncDone = false;
+    api.getRunDetail(runId).then((doc) => {
+      useWorkflowStore.setState((s) => {
+        const knownSteps = new Set(s.resultSteps.map((r) => r.step_name));
+        const updatedNodes = s.dagNodes.map((n) => {
+          if (n.status !== 'pending') return n;
+          const ss = doc.steps.find((x) => x.step_name === n.id);
+          if (!ss) return n;
+          return { ...n, status: mapStatus(ss.state) };
+        });
+        const mergedSteps = s.resultSteps.map((r) => {
+          const ss = doc.steps.find((x) => x.step_name === r.step_name);
+          if (!ss || r.state !== 'running') return r;
+          return { ...r, state: ss.state as StepRecord['state'], duration: ss.duration, error: ss.error || '' };
+        });
+        for (const ss of doc.steps) {
+          if (!knownSteps.has(ss.step_name)) {
+            mergedSteps.push({
+              run_id: runId, step_name: ss.step_name,
+              state: ss.state as StepRecord['state'],
+              data: ss.data || '', error: ss.error || '',
+              duration: ss.duration, target: ss.target || '',
+            });
+          }
+        }
+        return { dagNodes: updatedNodes, resultSteps: mergedSteps };
+      });
+      initialSyncDone = true;
+    });
+
     // SSE connection
     const es = new EventSource(`/api/sse/${runId}`);
     sseRef.current = es;
@@ -81,12 +112,9 @@ export function WorkflowPage() {
       for (const data of items) {
         if (data.type === 'step_start') {
           useWorkflowStore.setState((s) => {
-            // Only update the FIRST pending matching node (FIFO for parallel same-plugin steps)
-            let matched = false;
+            if (s.resultSteps.some((r) => r.step_name === data.step)) return s;
             const updatedNodes = s.dagNodes.map((n) => {
-              if (n.plugin !== data.step && n.id !== data.step) return n;
-              if (n.status !== 'pending' || matched) return n;
-              matched = true;
+              if (n.id !== data.step || n.status !== 'pending') return n;
               return { ...n, status: 'running' as const };
             });
             const newEntry: StepRecord = {
@@ -98,23 +126,13 @@ export function WorkflowPage() {
         } else if (data.type === 'step_end') {
           const st = mapStatus(data.state);
           useWorkflowStore.setState((s) => {
-            // Update the FIRST running matching node (FIFO)
-            let matchedNode = false;
             const updatedNodes = s.dagNodes.map((n) => {
-              if (n.plugin !== data.step && n.id !== data.step) return n;
-              if (n.status !== 'running' || matchedNode) return n;
-              matchedNode = true;
+              if (n.id !== data.step || n.status !== 'running') return n;
               return { ...n, status: st };
             });
-            // Update the FIRST running result entry (FIFO)
-            let foundRunning = false;
             const updatedSteps = s.resultSteps.map((r) => {
-              if (r.step_name !== data.step) return r;
-              if (!foundRunning && r.state === 'running') {
-                foundRunning = true;
-                return { ...r, state: data.state as StepRecord['state'], duration: data.duration, error: data.error || '' };
-              }
-              return r;
+              if (r.step_name !== data.step || r.state !== 'running') return r;
+              return { ...r, state: data.state as StepRecord['state'], duration: data.duration, error: data.error || '' };
             });
             return { dagNodes: updatedNodes, resultSteps: updatedSteps };
           });
@@ -140,20 +158,20 @@ export function WorkflowPage() {
           const doc = await api.getRunDetail(runId);
           const st = useWorkflowStore.getState();
 
-          // Update DAG nodes FIFO: each server step updates the first unmatched node
+          // Update DAG nodes: exact ID match
           const newNodes = [...st.dagNodes];
           for (const ss of doc.steps) {
             const mappedStatus = mapStatus(ss.state);
             for (let i = 0; i < newNodes.length; i++) {
               const n = newNodes[i];
-              if ((n.plugin === ss.step_name || n.id === ss.step_name) && n.status === 'pending') {
+              if (n.id === ss.step_name) {
                 newNodes[i] = { ...n, status: mappedStatus };
                 break;
               }
             }
           }
 
-          // Update resultSteps FIFO: each server step matches the first running entry
+          // Update resultSteps: exact step_name match
           const remainingSteps = [...doc.steps];
           const newResultSteps = st.resultSteps.map((r) => {
             const idx = remainingSteps.findIndex((ss) => ss.step_name === r.step_name);

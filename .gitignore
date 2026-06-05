@@ -26,6 +26,11 @@ kestra.bat
 h2.jar
 start_kestra.bat
 
+# 插件代码（不开源）
+plugins/shared/step_*/
+plugins/shared/test_remote.py
+!plugins/shared/.template/
+
 # 但保留示例
 !config/pipeline.example.json
 !examples/
@@ -38,6 +43,7 @@ skills-lock.json
 # 前端构建产物
 web/dist/
 web/node_modules/
+web/tsconfig.tsbuildinfo
 
 # 临时文件
 *.html~

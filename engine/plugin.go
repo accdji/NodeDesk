@@ -39,6 +39,7 @@ type Plugin struct {
 	Label     string
 	DependsOn []string
 	Target    string
+	Server    string // 远程服务器配置名称 (对应 config.Servers 的 key)
 	Runtime   string
 	Script    string
 	Config    map[string]any

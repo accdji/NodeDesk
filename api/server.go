@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sync"
 	"strconv"
+	"strings"
 	"time"
 
 	"workflow/config"
@@ -61,7 +62,8 @@ func RegisterPlugins(cfg *config.PipelineConfig) {
 			nameCounter[step.Plugin]++
 			p := engine.GlobalRegistry.Register(regName, step.Plugin, step.DependsOn)
 			p.Target = step.Target
-			p.Runtime = step.Runtime
+				p.Server = step.Server
+				p.Runtime = step.Runtime
 			p.Script = step.Script
 			p.Config = step.Config
 			p.Type = step.Type
@@ -467,7 +469,7 @@ func handleRun(w http.ResponseWriter, r *http.Request) {
 		p, ok := engine.GlobalRegistry.Get(stepID)
 		if !ok {
 			p = engine.GlobalRegistry.Register(stepID, s.Plugin, s.DependsOn)
-			p.Target = s.Target; p.Runtime = s.Runtime; p.Script = s.Script; p.Config = s.Config
+			p.Target = s.Target; p.Server = s.Server; p.Runtime = s.Runtime; p.Script = s.Script; p.Config = s.Config
 		}
 		step := *p; step.StepID = stepID; steps[i] = &step
 	}
@@ -552,7 +554,7 @@ func executeWorkflow(ctx context.Context, runID, projectName string, proj *confi
 				}
 			}
 			if p.Config != nil {
-				for k, v := range p.Config { inputData[k] = v }
+				for k, v := range p.Config { inputData[k] = resolveConfigValue(v, runner.GetResults()) }
 			}
 			var rules []mapper.Rule
 			if rawRules, ok := p.Config["mappings"]; ok {
@@ -571,17 +573,26 @@ func executeWorkflow(ctx context.Context, runID, projectName string, proj *confi
 		script = executor.ResolveScript(projectName, script)
 		params := map[string]any{"project": projectName, "project_id": proj.ProjectID, "work_dir": "."}
 		if p.Config != nil {
-			for k, v := range p.Config { params[k] = v }
+			for k, v := range p.Config { params[k] = resolveConfigValue(v, runner.GetResults()) }
 		}
-		result, execErr := executor.ExecuteLocal(runtime, script, p.Mode, p.EntryFunc, params,
-			func(line string) {
+		onLog := func(line string) {
 				ts := time.Now().Format("15:04:05")
 				if store != nil {
 					store.AppendLog(storage.LogEntry{RunID: runID, StepName: stepName, Timestamp: ts, Level: "INFO", Message: line})
 				}
 				broadcastSSE(runID, stepName, ts, line)
-			},
-		)
+			}
+
+			var result *executor.Result
+			var execErr error
+
+			// 根据 target/server 决定本地执行还是远程 SSH 执行
+			serverCfg, isRemote := resolveServer(p, getConfig())
+			if isRemote {
+				result, execErr = executor.ExecuteRemote(serverCfg, runtime, script, p.Mode, p.EntryFunc, params, onLog)
+			} else {
+				result, execErr = executor.ExecuteLocal(runtime, script, p.Mode, p.EntryFunc, params, onLog)
+			}
 		if execErr != nil {
 			if store != nil {
 				store.SaveStep(storage.StepRecord{RunID: runID, StepName: stepName, State: string(engine.StateFailed), Error: execErr.Error(), Target: p.Target})
@@ -715,6 +726,54 @@ func broadcastSSEEventRaw(runID, rawJSON string) {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(v)
+}
+
+// resolveConfigValue 递归解析配置值中的 $.step_name.field 引用
+func resolveConfigValue(v any, results map[string]*engine.StepResult) any {
+	switch val := v.(type) {
+	case string:
+		if strings.HasPrefix(val, "$.") {
+			resolved, err := engine.ResolveRef(val, results)
+			if err == nil {
+				return resolved
+			}
+		}
+		return val
+	case map[string]any:
+		out := make(map[string]any)
+		for mk, mv := range val {
+			out[mk] = resolveConfigValue(mv, results)
+		}
+		return out
+	case []any:
+		out := make([]any, len(val))
+		for i, item := range val {
+			out[i] = resolveConfigValue(item, results)
+		}
+		return out
+	default:
+		return v
+	}
+}
+
+// resolveServer 根据 step 的 target/server 字段查找远程服务器配置
+// 返回 (ServerConfig, true) 表示需要远程执行，(ServerConfig{}, false) 表示本地执行
+func resolveServer(p *engine.Plugin, cfg *config.PipelineConfig) (config.ServerConfig, bool) {
+	if cfg == nil || cfg.Servers == nil {
+		return config.ServerConfig{}, false
+	}
+	serverName := p.Server
+	if serverName == "" {
+		serverName = p.Target
+	}
+	if serverName == "" || serverName == "local" {
+		return config.ServerConfig{}, false
+	}
+	srv, ok := cfg.Servers[serverName]
+	if !ok {
+		return config.ServerConfig{}, false
+	}
+	return srv, true
 }
 
 func formatPlan(order []string, steps []*engine.Plugin) []map[string]any {
